@@ -1,0 +1,431 @@
+:root {
+  --space-0: #070b16;
+  --space-1: #121a33;
+  --hud-bg: rgba(12, 19, 37, 0.76);
+  --hud-line: rgba(178, 201, 240, 0.3);
+  --text-1: #f0f4ff;
+  --text-2: #a9b6d8;
+  --accent-a: #68f2ff;
+  --accent-b: #ff98da;
+  --accent-c: #ffd982;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.app-shell {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0.6rem;
+  color: var(--text-1);
+  background:
+    radial-gradient(circle at 18% 8%, rgba(58, 78, 126, 0.46), transparent 33%),
+    radial-gradient(circle at 82% 14%, rgba(160, 67, 148, 0.28), transparent 42%),
+    linear-gradient(180deg, #19254a, #070b16 55%);
+  display: grid;
+  place-items: center;
+}
+
+.env-stage {
+  position: relative;
+  width: min(100%, 31rem);
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  border-radius: 1.1rem;
+  border: 1px solid rgba(197, 221, 255, 0.24);
+  box-shadow: 0 24px 45px rgba(0, 0, 0, 0.48);
+  background: linear-gradient(180deg, var(--space-1), var(--space-0));
+}
+
+.extraction-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: manipulation;
+}
+
+.hud-panel {
+  border: 1px solid var(--hud-line);
+  background: var(--hud-bg);
+  backdrop-filter: blur(6px);
+}
+
+.mission-card {
+  position: absolute;
+  top: 0.8rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(88%, 21rem);
+  border-radius: 0.68rem;
+  padding: 0.45rem 0.6rem;
+  z-index: 6;
+}
+
+.mission-card .label {
+  display: block;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  color: var(--text-2);
+  letter-spacing: 0.08em;
+}
+
+.mission-card strong {
+  display: block;
+  margin-top: 0.24rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.top-right-meta {
+  position: absolute;
+  right: 0.72rem;
+  top: 3.65rem;
+  border-radius: 0.56rem;
+  padding: 0.45rem 0.5rem;
+  text-align: right;
+  z-index: 6;
+}
+
+.top-right-meta span {
+  display: block;
+  color: var(--text-2);
+  font-size: 0.62rem;
+}
+
+.top-right-meta strong {
+  font-size: 0.8rem;
+}
+
+.left-stack {
+  position: absolute;
+  left: 0.72rem;
+  top: 4.1rem;
+  width: min(34vw, 7.3rem);
+  display: grid;
+  gap: 0.4rem;
+  z-index: 6;
+}
+
+.metric {
+  border-radius: 0.58rem;
+  padding: 0.42rem 0.48rem;
+}
+
+.metric span {
+  display: block;
+  color: var(--text-2);
+  font-size: 0.64rem;
+}
+
+.metric strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.83rem;
+}
+
+.metric.compact small {
+  display: block;
+  margin-top: 0.16rem;
+  color: var(--text-2);
+  font-size: 0.6rem;
+}
+
+.extract-fab {
+  position: absolute;
+  left: 50%;
+  bottom: 4.95rem;
+  transform: translateX(-50%);
+  min-width: 11.5rem;
+  min-height: 3rem;
+  border: 0;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #051521;
+  background: linear-gradient(140deg, var(--accent-a), var(--accent-c));
+  box-shadow: 0 8px 18px rgba(66, 148, 214, 0.45);
+  z-index: 7;
+}
+
+.extract-fab:active {
+  transform: translateX(-50%) scale(0.985);
+}
+
+.command-dock {
+  position: absolute;
+  left: 0.45rem;
+  right: 0.45rem;
+  bottom: 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.34rem;
+  padding: 0.42rem;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(181, 205, 243, 0.24);
+  background: rgba(11, 18, 35, 0.92);
+  z-index: 10;
+}
+
+.command-dock button {
+  min-height: 3rem;
+  border-radius: 0.58rem;
+  border: 1px solid rgba(162, 182, 219, 0.28);
+  background: rgba(38, 53, 89, 0.8);
+  color: var(--text-1);
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+.command-dock button.ready {
+  border-color: rgba(251, 184, 123, 0.58);
+  background: linear-gradient(140deg, rgba(110, 55, 33, 0.95), rgba(160, 82, 43, 0.98));
+}
+
+.drawer {
+  position: absolute;
+  left: 0.58rem;
+  right: 0.58rem;
+  bottom: 4.05rem;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(1rem);
+  transition:
+    max-height 0.25s ease,
+    opacity 0.2s ease,
+    transform 0.25s ease;
+  border-radius: 0.82rem;
+  border: 1px solid rgba(188, 212, 251, 0.2);
+  background: rgba(7, 14, 29, 0.94);
+  z-index: 9;
+}
+
+.drawer.open {
+  max-height: 52%;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.drawer-content {
+  padding: 0.64rem;
+}
+
+.drawer-content > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.drawer-content h2 {
+  margin: 0;
+  font-size: 0.91rem;
+}
+
+.drawer-content header span {
+  font-size: 0.7rem;
+  color: var(--text-2);
+}
+
+.upgrade-grid {
+  margin-top: 0.56rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.upgrade-card {
+  border-radius: 0.58rem;
+  border: 1px solid rgba(170, 197, 241, 0.22);
+  padding: 0.46rem;
+  background: rgba(16, 28, 52, 0.86);
+}
+
+.upgrade-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.upgrade-card h3 {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.upgrade-card p {
+  margin: 0.28rem 0 0.4rem;
+  color: var(--text-2);
+  font-size: 0.67rem;
+}
+
+.upgrade-card button {
+  width: 100%;
+  min-height: 2.5rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(173, 200, 244, 0.3);
+  background: rgba(56, 77, 118, 0.8);
+  color: var(--text-1);
+}
+
+.upgrade-card button:disabled {
+  opacity: 0.5;
+}
+
+.crew-grid {
+  margin-top: 0.56rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.34rem;
+}
+
+.crew-card {
+  border-radius: 0.5rem;
+  border: 1px solid rgba(172, 190, 227, 0.28);
+  padding: 0.38rem;
+  background: rgba(20, 34, 60, 0.9);
+}
+
+.crew-card strong {
+  display: block;
+  font-size: 0.63rem;
+}
+
+.crew-card span {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 0.6rem;
+  color: var(--text-2);
+}
+
+.building-row {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.building-row span {
+  padding: 0.22rem 0.36rem;
+  border-radius: 0.35rem;
+  border: 1px solid rgba(170, 184, 213, 0.24);
+  color: var(--text-2);
+  font-size: 0.58rem;
+}
+
+.building-row span.on {
+  color: #dff6ff;
+  border-color: rgba(114, 239, 255, 0.52);
+  background: rgba(51, 102, 117, 0.58);
+}
+
+.systems-grid {
+  margin-top: 0.58rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.systems-grid article {
+  border-radius: 0.55rem;
+  border: 1px solid rgba(166, 184, 220, 0.25);
+  padding: 0.44rem;
+  background: rgba(21, 31, 54, 0.88);
+}
+
+.systems-grid span {
+  display: block;
+  color: var(--text-2);
+  font-size: 0.62rem;
+}
+
+.systems-grid strong {
+  display: block;
+  margin-top: 0.24rem;
+  font-size: 0.8rem;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.56);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  z-index: 20;
+}
+
+.modal-card {
+  width: min(26rem, 100%);
+  border-radius: 0.9rem;
+  border: 1px solid rgba(186, 210, 248, 0.28);
+  background: rgba(8, 15, 24, 0.98);
+  padding: 0.95rem;
+}
+
+.modal-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.modal-card p {
+  margin: 0.5rem 0;
+  color: var(--text-2);
+  font-size: 0.82rem;
+}
+
+.modal-card button {
+  width: 100%;
+  min-height: 2.8rem;
+  margin-top: 0.44rem;
+  border: 0;
+  border-radius: 0.68rem;
+  font-weight: 700;
+  background: linear-gradient(140deg, var(--accent-a), var(--accent-c));
+  color: #071826;
+}
+
+.toast {
+  position: fixed;
+  right: 0.7rem;
+  bottom: 0.7rem;
+  width: min(22rem, calc(100vw - 1.4rem));
+  border-radius: 0.8rem;
+  border: 1px solid rgba(163, 239, 255, 0.35);
+  background: rgba(8, 17, 24, 0.95);
+  padding: 0.7rem;
+  color: var(--text-1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.8rem;
+  z-index: 30;
+}
+
+.toast button {
+  min-height: 2.2rem;
+  min-width: 5.2rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(171, 220, 255, 0.34);
+  color: var(--text-1);
+  background: rgba(57, 92, 122, 0.7);
+}
+
+@media (max-height: 720px) {
+  .mission-card {
+    top: 0.58rem;
+  }
+
+  .left-stack {
+    top: 3.8rem;
+    width: min(32vw, 6.6rem);
+  }
+
+  .extract-fab {
+    bottom: 4.6rem;
+  }
+}
+

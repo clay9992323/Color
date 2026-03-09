@@ -1,0 +1,103 @@
+export type UpgradeLaneId = 'extraction' | 'automation' | 'diffusion'
+
+export type OperatorState = 'approach' | 'siphon' | 'return' | 'recover'
+
+export interface Vec2 {
+  x: number
+  y: number
+}
+
+export interface BuildingDefinition {
+  id: string
+  name: string
+  unlockAtTotalTiers: number
+  color: string
+}
+
+export interface UpgradeLaneDefinition {
+  id: UpgradeLaneId
+  name: string
+  description: string
+  baseCost: number
+  growth: number
+  maxTier: number
+}
+
+export interface WorkforceState {
+  logicalOperators: number
+  visibleCap: number
+  visibleOperators: number
+  overflowOperators: number
+  squads: number
+}
+
+export interface OperatorAgent {
+  id: number
+  state: OperatorState
+  lane: number
+  cycleProgress: number
+  tintLevel: number
+  phaseElapsed: number
+  phaseDuration: number
+  spawn: Vec2
+  anchor: Vec2
+  position: Vec2
+}
+
+export interface SquadBeacon {
+  id: number
+  representedCount: number
+  anchorPosition: Vec2
+  pulsePhase: number
+}
+
+export interface EconomySnapshot {
+  tapGain: number
+  autoGainPerSec: number
+  restorationGainPerSec: number
+  prestigeMultiplier: number
+}
+
+export interface OfflineGainResult {
+  elapsedSeconds: number
+  cappedSeconds: number
+  chromaAwarded: number
+  restorationAwarded: number
+}
+
+export interface PrestigeResult {
+  earnedShards: number
+  newTotalShards: number
+  newMultiplier: number
+}
+
+export interface SaveDataV1 {
+  version: 1
+  chroma: number
+  restorationPoints: number
+  prismShards: number
+  upgrades: Record<UpgradeLaneId, number>
+  totalUpgradesPurchased: number
+  lifetimeRestorationPoints: number
+  lastActiveAt: number
+}
+
+export interface GameState {
+  chroma: number
+  restorationPoints: number
+  restorationPercent: number
+  prismShards: number
+  prestigeMultiplier: number
+  upgrades: Record<UpgradeLaneId, number>
+  totalUpgradesPurchased: number
+  unlockedBuildings: number
+  workforce: WorkforceState
+  agents: OperatorAgent[]
+  beacons: SquadBeacon[]
+  economy: EconomySnapshot
+  lastTickAt: number
+  lastActiveAt: number
+  lifetimeRestorationPoints: number
+  offlineGainResult: OfflineGainResult | null
+}
+
