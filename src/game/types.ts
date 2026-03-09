@@ -14,6 +14,13 @@ export interface BuildingDefinition {
   color: string
 }
 
+export interface BuildingUpgradeOption {
+  id: string
+  name: string
+  description: string
+  lane: UpgradeLaneId
+}
+
 export interface UpgradeLaneDefinition {
   id: UpgradeLaneId
   name: string
@@ -100,4 +107,3 @@ export interface GameState {
   lifetimeRestorationPoints: number
   offlineGainResult: OfflineGainResult | null
 }
-

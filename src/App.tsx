@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
-import { BUILDINGS, GAME_TITLE, SAVE_INTERVAL_MS, TICK_RATE_HZ, UPGRADE_LANES } from './game/config'
+import {
+  BUILDINGS,
+  BUILDING_UPGRADE_OPTIONS,
+  GAME_TITLE,
+  SAVE_INTERVAL_MS,
+  TICK_RATE_HZ,
+  UPGRADE_LANES,
+} from './game/config'
 import { createAudioBus } from './game/audio'
 import { calculateUpgradeCost } from './game/economy'
 import { formatCompact, formatPercent, formatSeconds } from './game/format'
 import { ExtractionCanvas } from './game/render/ExtractionCanvas'
 import { useGameStore } from './game/store'
 
-type ActivePanel = 'upgrades' | 'crew' | 'systems' | null
+type ActivePanel = 'crew' | 'systems' | null
 
 function App() {
   const [lastPrestigeGain, setLastPrestigeGain] = useState<number | null>(null)
   const [activePanel, setActivePanel] = useState<ActivePanel>(null)
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null)
   const audioRef = useRef(createAudioBus())
   const priorUnlockedRef = useRef(0)
   const initialized = useGameStore((state) => state.initialized)
@@ -79,30 +87,50 @@ function App() {
     }
   }, [initialized, saveNow])
 
-  const laneViewModels = useMemo(
-    () =>
-      UPGRADE_LANES.map((lane) => {
-        const currentTier = upgrades[lane.id]
-        const isMaxed = currentTier >= lane.maxTier
-        const nextCost = isMaxed ? 0 : calculateUpgradeCost(lane.id, currentTier)
-        const canAfford = !isMaxed && chroma >= nextCost
-        return {
-          ...lane,
-          currentTier,
-          isMaxed,
-          nextCost,
-          canAfford,
-        }
-      }),
-    [chroma, upgrades],
-  )
-
   const crewCards = useMemo(
     () => Array.from({ length: Math.min(12, workforce.visibleOperators) }, (_, idx) => idx),
     [workforce.visibleOperators],
   )
 
   const nextBuilding = BUILDINGS[unlockedBuildings]
+  const selectedBuilding = selectedBuildingId
+    ? BUILDINGS.find((building) => building.id === selectedBuildingId) ?? null
+    : null
+  const unlockedBuildingIds = useMemo(
+    () => BUILDINGS.slice(0, unlockedBuildings).map((building) => building.id),
+    [unlockedBuildings],
+  )
+  const selectedBuildingIndex = selectedBuilding
+    ? BUILDINGS.findIndex((building) => building.id === selectedBuilding.id)
+    : -1
+  const selectedBuildingUnlocked =
+    selectedBuildingIndex >= 0 && selectedBuildingIndex < unlockedBuildings
+
+  const selectedBuildingUpgrades = useMemo(() => {
+    if (!selectedBuilding) {
+      return []
+    }
+    const options = BUILDING_UPGRADE_OPTIONS[selectedBuilding.id] ?? []
+    return options
+      .map((option) => {
+        const lane = UPGRADE_LANES.find((entry) => entry.id === option.lane)
+        if (!lane) {
+          return null
+        }
+        const currentTier = upgrades[option.lane]
+        const isMaxed = currentTier >= lane.maxTier
+        const nextCost = isMaxed ? 0 : calculateUpgradeCost(option.lane, currentTier)
+        return {
+          ...option,
+          currentTier,
+          maxTier: lane.maxTier,
+          isMaxed,
+          nextCost,
+          canAfford: selectedBuildingUnlocked && !isMaxed && chroma >= nextCost,
+        }
+      })
+      .filter((entry) => entry !== null)
+  }, [chroma, selectedBuilding, selectedBuildingUnlocked, upgrades])
 
   const handleExtract = () => {
     extract()
@@ -120,10 +148,26 @@ function App() {
     audioRef.current.prestige()
     setLastPrestigeGain(result.earnedShards)
     setActivePanel(null)
+    setSelectedBuildingId(null)
   }
 
   const togglePanel = (panel: ActivePanel) => {
     setActivePanel((current) => (current === panel ? null : panel))
+    setSelectedBuildingId(null)
+  }
+
+  const cycleSelectedBuilding = (direction: 1 | -1) => {
+    if (unlockedBuildingIds.length === 0) {
+      return
+    }
+    if (!selectedBuildingId || !unlockedBuildingIds.includes(selectedBuildingId)) {
+      setSelectedBuildingId(unlockedBuildingIds[0])
+      return
+    }
+    const currentIndex = unlockedBuildingIds.indexOf(selectedBuildingId)
+    const nextIndex =
+      (currentIndex + direction + unlockedBuildingIds.length) % unlockedBuildingIds.length
+    setSelectedBuildingId(unlockedBuildingIds[nextIndex])
   }
 
   return (
@@ -135,7 +179,18 @@ function App() {
           workforce={workforce}
           agents={agents}
           beacons={beacons}
+          selectedBuildingId={selectedBuildingId}
           onExtract={handleExtract}
+          onSelectBuilding={(buildingId) => {
+            if (buildingId && unlockedBuildingIds.includes(buildingId)) {
+              setSelectedBuildingId(buildingId)
+            } else {
+              setSelectedBuildingId(null)
+            }
+            if (buildingId) {
+              setActivePanel(null)
+            }
+          }}
         />
 
         <div className="mission-card hud-panel">
@@ -179,8 +234,14 @@ function App() {
         </button>
 
         <footer className="command-dock">
-          <button type="button" onClick={() => togglePanel('upgrades')}>
-            Upgrades
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedBuildingId(null)
+              setActivePanel(null)
+            }}
+          >
+            Center
           </button>
           <button type="button" onClick={() => togglePanel('crew')}>
             Crew
@@ -198,41 +259,67 @@ function App() {
           </button>
         </footer>
 
-        <section className={`drawer ${activePanel ? 'open' : ''}`}>
-          {activePanel === 'upgrades' && (
-            <div className="drawer-content">
-              <header>
-                <h2>Upgrade Network</h2>
-                <span>Auto/sec {formatCompact(economy.autoGainPerSec)}</span>
-              </header>
-              <div className="upgrade-grid">
-                {laneViewModels.map((lane) => (
-                  <article key={lane.id} className="upgrade-card">
-                    <header>
-                      <h3>{lane.name}</h3>
-                      <span>
-                        {lane.currentTier}/{lane.maxTier}
-                      </span>
-                    </header>
-                    <p>{lane.description}</p>
+        {selectedBuilding && (
+          <section className="building-menu">
+            <header>
+              <div>
+                <span>{selectedBuilding.name}</span>
+                <strong>
+                  {selectedBuildingUnlocked
+                    ? 'Building Upgrades'
+                    : `Unlocks at ${selectedBuilding.unlockAtTotalTiers} total tiers`}
+                </strong>
+              </div>
+              <div className="building-menu-nav">
+                <button type="button" onClick={() => cycleSelectedBuilding(-1)} aria-label="Previous building">
+                  &lt;
+                </button>
+                <span>
+                  {Math.max(1, unlockedBuildingIds.indexOf(selectedBuilding.id) + 1)}/
+                  {unlockedBuildingIds.length}
+                </span>
+                <button type="button" onClick={() => cycleSelectedBuilding(1)} aria-label="Next building">
+                  &gt;
+                </button>
+                <button type="button" onClick={() => setSelectedBuildingId(null)}>
+                  Close
+                </button>
+              </div>
+            </header>
+
+            {selectedBuildingUnlocked ? (
+              <div className="building-upgrade-grid">
+                {selectedBuildingUpgrades.map((upgrade) => (
+                  <article key={upgrade.id} className="building-upgrade-card">
+                    <h3>{upgrade.name}</h3>
+                    <p>{upgrade.description}</p>
+                    <small>
+                      {upgrade.currentTier}/{upgrade.maxTier}
+                    </small>
                     <button
                       type="button"
-                      disabled={!lane.canAfford}
+                      disabled={!upgrade.canAfford}
                       onClick={() => {
-                        const purchased = purchaseUpgrade(lane.id)
+                        const purchased = purchaseUpgrade(upgrade.lane)
                         if (purchased) {
                           audioRef.current.buy()
                         }
                       }}
                     >
-                      {lane.isMaxed ? 'Maxed' : `Upgrade ${formatCompact(lane.nextCost)}`}
+                      {upgrade.isMaxed ? 'Maxed' : `Upgrade ${formatCompact(upgrade.nextCost)}`}
                     </button>
                   </article>
                 ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="building-locked-note">
+                Keep upgrading other structures to activate this building.
+              </p>
+            )}
+          </section>
+        )}
 
+        <section className={`drawer ${activePanel ? 'open' : ''}`}>
           {activePanel === 'crew' && (
             <div className="drawer-content">
               <header>
@@ -320,4 +407,3 @@ function App() {
 }
 
 export default App
-

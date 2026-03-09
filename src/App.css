@@ -185,6 +185,122 @@
   background: linear-gradient(140deg, rgba(110, 55, 33, 0.95), rgba(160, 82, 43, 0.98));
 }
 
+.building-menu {
+  position: absolute;
+  left: 0.58rem;
+  right: 0.58rem;
+  bottom: 4.05rem;
+  border-radius: 0.82rem;
+  border: 1px solid rgba(188, 212, 251, 0.2);
+  background: rgba(7, 14, 29, 0.95);
+  z-index: 11;
+  padding: 0.62rem;
+}
+
+.building-menu > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.building-menu > header span {
+  display: block;
+  color: var(--text-2);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.building-menu > header strong {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.84rem;
+}
+
+.building-menu > header button {
+  min-height: 2.2rem;
+  min-width: 4.4rem;
+  border-radius: 0.46rem;
+  border: 1px solid rgba(170, 190, 225, 0.35);
+  background: rgba(39, 57, 92, 0.82);
+  color: var(--text-1);
+}
+
+.building-menu-nav {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.34rem;
+}
+
+.building-menu-nav span {
+  min-width: 2.4rem;
+  text-align: center;
+  font-size: 0.66rem;
+  color: var(--text-2);
+}
+
+.building-menu-nav button[aria-label] {
+  min-width: 2.2rem;
+  padding: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.building-menu-nav button:last-child {
+  padding: 0 0.62rem;
+}
+
+.building-upgrade-grid {
+  margin-top: 0.56rem;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.building-upgrade-card {
+  border-radius: 0.56rem;
+  border: 1px solid rgba(170, 197, 241, 0.24);
+  padding: 0.46rem;
+  background: rgba(16, 28, 52, 0.88);
+}
+
+.building-upgrade-card h3 {
+  margin: 0;
+  font-size: 0.79rem;
+}
+
+.building-upgrade-card p {
+  margin: 0.28rem 0 0.22rem;
+  color: var(--text-2);
+  font-size: 0.66rem;
+}
+
+.building-upgrade-card small {
+  color: var(--text-2);
+  font-size: 0.62rem;
+}
+
+.building-upgrade-card button {
+  width: 100%;
+  min-height: 2.45rem;
+  margin-top: 0.42rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(173, 200, 244, 0.3);
+  background: rgba(56, 77, 118, 0.8);
+  color: var(--text-1);
+}
+
+.building-upgrade-card button:disabled {
+  opacity: 0.5;
+}
+
+.building-locked-note {
+  margin: 0.62rem 0 0.12rem;
+  color: var(--text-2);
+  font-size: 0.72rem;
+}
+
 .drawer {
   position: absolute;
   left: 0.58rem;
@@ -428,4 +544,3 @@
     bottom: 4.6rem;
   }
 }
-
