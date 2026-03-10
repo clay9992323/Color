@@ -1,12 +1,25 @@
 import { useStore } from 'zustand'
 import { createStore } from 'zustand/vanilla'
-import { BUILDINGS, SAVE_KEY, SAVE_VERSION, TICK_SECONDS, UPGRADE_LANES } from './config'
 import {
+  BUILDINGS,
+  MOMENTUM_DECAY_PER_SECOND,
+  MOMENTUM_PER_TAP,
+  MOMENTUM_PER_UPGRADE,
+  SAVE_KEY,
+  SAVE_VERSION,
+  TICK_SECONDS,
+  UNLOCK_SURGE_SECONDS,
+  UPGRADE_LANES,
+} from './config'
+import {
+  calculateBuildingUnlockChromaReward,
   calculateDiffusionMultiplier,
+  calculateEngagementMultiplier,
   calculateEconomySnapshot,
   calculateOfflineGain,
   calculatePrestigeResult,
   calculateRestorationPercent,
+  calculateUpgradeShardRequirement,
   calculateUpgradeCost,
   calculatePrestigeMultiplier,
 } from './economy'
@@ -39,6 +52,8 @@ export interface GameStore extends GameState {
 interface BaseState {
   chroma: number
   restorationPoints: number
+  momentum: number
+  unlockSurgeSeconds: number
   prismShards: number
   upgrades: Record<UpgradeLaneId, number>
   totalUpgradesPurchased: number
@@ -58,14 +73,29 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
 }
 
-export function calculateUnlockedBuildingCount(totalUpgradesPurchased: number): number {
-  return BUILDINGS.filter((building) => totalUpgradesPurchased >= building.unlockAtTotalTiers).length
+export function calculateUnlockedBuildingCount(
+  totalUpgradesPurchased: number,
+  prismShards: number,
+): number {
+  let unlocked = 0
+  for (let i = 0; i < BUILDINGS.length; i += 1) {
+    const building = BUILDINGS[i]
+    const meetsTier = totalUpgradesPurchased >= building.unlockAtTotalTiers
+    const meetsShards = prismShards >= building.unlockAtPrismShards
+    if (!meetsTier || !meetsShards) {
+      break
+    }
+    unlocked += 1
+  }
+  return Math.max(1, Math.min(BUILDINGS.length, unlocked))
 }
 
 function createBaseState(now: number, prismShards = 0): BaseState {
   return {
     chroma: 0,
     restorationPoints: 0,
+    momentum: 0,
+    unlockSurgeSeconds: 0,
     prismShards,
     upgrades: { ...DEFAULT_UPGRADES },
     totalUpgradesPurchased: 0,
@@ -77,15 +107,23 @@ function createBaseState(now: number, prismShards = 0): BaseState {
 }
 
 function hydrateState(base: BaseState, previous?: GameState): GameState {
-  const unlockedBuildings = calculateUnlockedBuildingCount(base.totalUpgradesPurchased)
+  const unlockedBuildings = calculateUnlockedBuildingCount(
+    base.totalUpgradesPurchased,
+    base.prismShards,
+  )
   const workforce = calculateWorkforce(base.upgrades.automation, unlockedBuildings)
   const restorationPercent = calculateRestorationPercent(base.restorationPoints)
+  const engagementMultiplier = calculateEngagementMultiplier(
+    base.momentum,
+    base.unlockSurgeSeconds,
+  )
   const prestigeMultiplier = calculatePrestigeMultiplier(base.prismShards)
   const economy = calculateEconomySnapshot({
     extractionTier: base.upgrades.extraction,
     diffusionTier: base.upgrades.diffusion,
     logicalOperators: workforce.logicalOperators,
     prestigeMultiplier,
+    engagementMultiplier,
   })
   const laneCount = Math.max(1, unlockedBuildings)
   const tintLevel = restorationPercent / 100
@@ -108,6 +146,8 @@ function hydrateState(base: BaseState, previous?: GameState): GameState {
     chroma: base.chroma,
     restorationPoints: base.restorationPoints,
     restorationPercent,
+    momentum: base.momentum,
+    unlockSurgeSeconds: base.unlockSurgeSeconds,
     prismShards: base.prismShards,
     prestigeMultiplier,
     upgrades: base.upgrades,
@@ -174,8 +214,10 @@ function toSaveData(state: GameState): SaveDataV1 {
 
 function createPostPrestigeBase(state: GameState, result: PrestigeResult, now: number): BaseState {
   return {
-    chroma: 0,
+    chroma: result.launchChroma,
     restorationPoints: 0,
+    momentum: result.launchMomentum,
+    unlockSurgeSeconds: result.launchSurgeSeconds,
     prismShards: result.newTotalShards,
     upgrades: { ...DEFAULT_UPGRADES },
     totalUpgradesPurchased: 0,
@@ -211,6 +253,8 @@ export function createGameStore() {
       const base: BaseState = {
         chroma: parsed.chroma,
         restorationPoints: parsed.restorationPoints,
+        momentum: 0,
+        unlockSurgeSeconds: 0,
         prismShards: parsed.prismShards,
         upgrades: parsed.upgrades,
         totalUpgradesPurchased: parsed.totalUpgradesPurchased,
@@ -239,7 +283,17 @@ export function createGameStore() {
     tick: (deltaSeconds = TICK_SECONDS) => {
       const nowTick = Date.now()
       set((state) => {
-        const autoGain = state.economy.autoGainPerSec * deltaSeconds
+        const momentum = Math.max(0, state.momentum - MOMENTUM_DECAY_PER_SECOND * deltaSeconds)
+        const unlockSurgeSeconds = Math.max(0, state.unlockSurgeSeconds - deltaSeconds)
+        const engagementMultiplier = calculateEngagementMultiplier(momentum, unlockSurgeSeconds)
+        const economy = calculateEconomySnapshot({
+          extractionTier: state.upgrades.extraction,
+          diffusionTier: state.upgrades.diffusion,
+          logicalOperators: state.workforce.logicalOperators,
+          prestigeMultiplier: state.prestigeMultiplier,
+          engagementMultiplier,
+        })
+        const autoGain = economy.autoGainPerSec * deltaSeconds
         const restorationGain = autoGain * calculateDiffusionMultiplier(state.upgrades.diffusion)
         const restorationPoints = state.restorationPoints + restorationGain
         const restorationPercent = calculateRestorationPercent(restorationPoints)
@@ -247,12 +301,15 @@ export function createGameStore() {
         const laneCount = Math.max(1, state.unlockedBuildings)
 
         return {
+          momentum,
+          unlockSurgeSeconds,
           chroma: state.chroma + autoGain,
           restorationPoints,
           restorationPercent,
           lifetimeRestorationPoints: state.lifetimeRestorationPoints + restorationGain,
           agents: stepOperators(state.agents, deltaSeconds, laneCount, tintLevel),
           beacons: stepBeacons(state.beacons, deltaSeconds),
+          economy,
           lastTickAt: nowTick,
           lastActiveAt: nowTick,
         }
@@ -262,14 +319,28 @@ export function createGameStore() {
     extract: () => {
       const nowTick = Date.now()
       set((state) => {
-        const gain = state.economy.tapGain
+        const momentum = Math.min(1, state.momentum + MOMENTUM_PER_TAP)
+        const engagementMultiplier = calculateEngagementMultiplier(
+          momentum,
+          state.unlockSurgeSeconds,
+        )
+        const economy = calculateEconomySnapshot({
+          extractionTier: state.upgrades.extraction,
+          diffusionTier: state.upgrades.diffusion,
+          logicalOperators: state.workforce.logicalOperators,
+          prestigeMultiplier: state.prestigeMultiplier,
+          engagementMultiplier,
+        })
+        const gain = economy.tapGain
         const restorationGain = gain * calculateDiffusionMultiplier(state.upgrades.diffusion)
         const restorationPoints = state.restorationPoints + restorationGain
         return {
+          momentum,
           chroma: state.chroma + gain,
           restorationPoints,
           restorationPercent: calculateRestorationPercent(restorationPoints),
           lifetimeRestorationPoints: state.lifetimeRestorationPoints + restorationGain,
+          economy,
           lastTickAt: nowTick,
           lastActiveAt: nowTick,
         }
@@ -288,6 +359,12 @@ export function createGameStore() {
         return false
       }
 
+      const nextTier = currentTier + 1
+      const requiredShards = calculateUpgradeShardRequirement(lane, nextTier)
+      if (state.prismShards < requiredShards) {
+        return false
+      }
+
       const cost = calculateUpgradeCost(lane, currentTier)
       if (state.chroma < cost) {
         return false
@@ -295,14 +372,34 @@ export function createGameStore() {
 
       const nextUpgrades = {
         ...state.upgrades,
-        [lane]: currentTier + 1,
+        [lane]: nextTier,
       }
+      const nextTotalUpgradesPurchased = state.totalUpgradesPurchased + 1
+      const nextUnlockedBuildingCount = calculateUnlockedBuildingCount(
+        nextTotalUpgradesPurchased,
+        state.prismShards,
+      )
+      let unlockReward = 0
+      for (
+        let unlocked = state.unlockedBuildings + 1;
+        unlocked <= nextUnlockedBuildingCount;
+        unlocked += 1
+      ) {
+        unlockReward += calculateBuildingUnlockChromaReward(unlocked)
+      }
+      const hasNewUnlock = nextUnlockedBuildingCount > state.unlockedBuildings
+      const nextUnlockSurgeSeconds = hasNewUnlock
+        ? Math.max(state.unlockSurgeSeconds, UNLOCK_SURGE_SECONDS)
+        : state.unlockSurgeSeconds
+
       const nextBase: BaseState = {
-        chroma: state.chroma - cost,
+        chroma: state.chroma - cost + unlockReward,
         restorationPoints: state.restorationPoints,
+        momentum: Math.min(1, state.momentum + MOMENTUM_PER_UPGRADE),
+        unlockSurgeSeconds: nextUnlockSurgeSeconds,
         prismShards: state.prismShards,
         upgrades: nextUpgrades,
-        totalUpgradesPurchased: state.totalUpgradesPurchased + 1,
+        totalUpgradesPurchased: nextTotalUpgradesPurchased,
         lifetimeRestorationPoints: state.lifetimeRestorationPoints,
         lastTickAt: Date.now(),
         lastActiveAt: Date.now(),

@@ -4,20 +4,26 @@ import {
   BUILDINGS,
   BUILDING_UPGRADE_OPTIONS,
   GAME_TITLE,
+  RESTORATION_TARGET_POINTS,
   SAVE_INTERVAL_MS,
   TICK_RATE_HZ,
   UPGRADE_LANES,
 } from './game/config'
 import { createAudioBus } from './game/audio'
-import { calculateUpgradeCost } from './game/economy'
+import {
+  calculatePrestigeReward,
+  calculateUpgradeCost,
+  calculateUpgradeShardRequirement,
+} from './game/economy'
 import { formatCompact, formatPercent, formatSeconds } from './game/format'
 import { ExtractionCanvas } from './game/render/ExtractionCanvas'
 import { useGameStore } from './game/store'
+import type { PrestigeResult } from './game/types'
 
 type ActivePanel = 'crew' | 'systems' | null
 
 function App() {
-  const [lastPrestigeGain, setLastPrestigeGain] = useState<number | null>(null)
+  const [lastPrestigeResult, setLastPrestigeResult] = useState<PrestigeResult | null>(null)
   const [activePanel, setActivePanel] = useState<ActivePanel>(null)
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null)
   const audioRef = useRef(createAudioBus())
@@ -34,9 +40,12 @@ function App() {
   const chroma = useGameStore((state) => state.chroma)
   const restorationPercent = useGameStore((state) => state.restorationPercent)
   const restorationPoints = useGameStore((state) => state.restorationPoints)
+  const momentum = useGameStore((state) => state.momentum)
+  const unlockSurgeSeconds = useGameStore((state) => state.unlockSurgeSeconds)
   const prismShards = useGameStore((state) => state.prismShards)
   const prestigeMultiplier = useGameStore((state) => state.prestigeMultiplier)
   const upgrades = useGameStore((state) => state.upgrades)
+  const totalUpgradesPurchased = useGameStore((state) => state.totalUpgradesPurchased)
   const unlockedBuildings = useGameStore((state) => state.unlockedBuildings)
   const workforce = useGameStore((state) => state.workforce)
   const agents = useGameStore((state) => state.agents)
@@ -93,6 +102,19 @@ function App() {
   )
 
   const nextBuilding = BUILDINGS[unlockedBuildings]
+  const nextTierProgress = nextBuilding
+    ? `${Math.min(totalUpgradesPurchased, nextBuilding.unlockAtTotalTiers)}/${nextBuilding.unlockAtTotalTiers} tiers`
+    : null
+  const nextShardProgress =
+    nextBuilding && nextBuilding.unlockAtPrismShards > 0
+      ? `${Math.min(prismShards, nextBuilding.unlockAtPrismShards)}/${nextBuilding.unlockAtPrismShards} shards`
+      : null
+  const outputBoostPercent = Math.max(0, (economy.engagementMultiplier - 1) * 100)
+  const prestigeRewardNow = calculatePrestigeReward(restorationPoints, prismShards)
+  const prestigeRewardAt125 = calculatePrestigeReward(
+    Math.max(restorationPoints, RESTORATION_TARGET_POINTS * 1.25),
+    prismShards,
+  )
   const selectedBuilding = selectedBuildingId
     ? BUILDINGS.find((building) => building.id === selectedBuildingId) ?? null
     : null
@@ -119,18 +141,30 @@ function App() {
         }
         const currentTier = upgrades[option.lane]
         const isMaxed = currentTier >= lane.maxTier
+        const nextTier = currentTier + 1
         const nextCost = isMaxed ? 0 : calculateUpgradeCost(option.lane, currentTier)
+        const shardRequirement = isMaxed
+          ? 0
+          : calculateUpgradeShardRequirement(option.lane, nextTier)
+        const missingShards = !isMaxed && prismShards < shardRequirement
         return {
           ...option,
           currentTier,
+          nextTier,
           maxTier: lane.maxTier,
           isMaxed,
           nextCost,
-          canAfford: selectedBuildingUnlocked && !isMaxed && chroma >= nextCost,
+          shardRequirement,
+          missingShards,
+          canAfford:
+            selectedBuildingUnlocked &&
+            !isMaxed &&
+            chroma >= nextCost &&
+            !missingShards,
         }
       })
       .filter((entry) => entry !== null)
-  }, [chroma, selectedBuilding, selectedBuildingUnlocked, upgrades])
+  }, [chroma, prismShards, selectedBuilding, selectedBuildingUnlocked, upgrades])
 
   const handleExtract = () => {
     extract()
@@ -146,7 +180,7 @@ function App() {
       return
     }
     audioRef.current.prestige()
-    setLastPrestigeGain(result.earnedShards)
+    setLastPrestigeResult(result)
     setActivePanel(null)
     setSelectedBuildingId(null)
   }
@@ -198,10 +232,31 @@ function App() {
           {nextBuilding ? (
             <strong>
               Unlock {nextBuilding.name} @ {nextBuilding.unlockAtTotalTiers} tiers
+              {nextBuilding.unlockAtPrismShards > 0
+                ? ` + ${nextBuilding.unlockAtPrismShards} shards`
+                : ''}
             </strong>
           ) : (
             <strong>All sectors colorized. Ready for prestige.</strong>
           )}
+          {nextBuilding && (
+            <small className="mission-progress">
+              {nextTierProgress}
+              {nextShardProgress ? ` - ${nextShardProgress}` : ''}
+            </small>
+          )}
+          <small className={`mission-bonus ${outputBoostPercent <= 0.1 ? 'muted' : ''}`}>
+            {outputBoostPercent > 0.1
+              ? `Output Boost +${outputBoostPercent.toFixed(0)}%${
+                  unlockSurgeSeconds > 0
+                    ? ` - Surge ${Math.ceil(unlockSurgeSeconds)}s`
+                    : ` - Momentum ${Math.round(momentum * 100)}%`
+                }`
+              : 'Build momentum by tapping and buying upgrades.'}
+          </small>
+          <small className="mission-prestige">
+            Prestige now +{prestigeRewardNow} shards (125%: +{prestigeRewardAt125})
+          </small>
         </div>
 
         <div className="top-right-meta hud-panel">
@@ -234,15 +289,6 @@ function App() {
         </button>
 
         <footer className="command-dock">
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedBuildingId(null)
-              setActivePanel(null)
-            }}
-          >
-            Center
-          </button>
           <button type="button" onClick={() => togglePanel('crew')}>
             Crew
           </button>
@@ -255,7 +301,7 @@ function App() {
             onClick={handlePrestige}
             className={restorationPercent >= 100 ? 'ready' : ''}
           >
-            Prestige
+            {restorationPercent >= 100 ? `Prestige +${prestigeRewardNow}` : 'Prestige'}
           </button>
         </footer>
 
@@ -267,7 +313,11 @@ function App() {
                 <strong>
                   {selectedBuildingUnlocked
                     ? 'Building Upgrades'
-                    : `Unlocks at ${selectedBuilding.unlockAtTotalTiers} total tiers`}
+                    : `Unlocks at ${selectedBuilding.unlockAtTotalTiers} tiers${
+                        selectedBuilding.unlockAtPrismShards > 0
+                          ? ` + ${selectedBuilding.unlockAtPrismShards} shards`
+                          : ''
+                      }`}
                 </strong>
               </div>
               <div className="building-menu-nav">
@@ -296,6 +346,11 @@ function App() {
                     <small>
                       {upgrade.currentTier}/{upgrade.maxTier}
                     </small>
+                    {!upgrade.isMaxed && upgrade.shardRequirement > 0 && (
+                      <small className={`upgrade-gate ${upgrade.missingShards ? 'locked' : ''}`}>
+                        Tier {upgrade.nextTier} requires {formatCompact(upgrade.shardRequirement)} shards
+                      </small>
+                    )}
                     <button
                       type="button"
                       disabled={!upgrade.canAfford}
@@ -306,7 +361,13 @@ function App() {
                         }
                       }}
                     >
-                      {upgrade.isMaxed ? 'Maxed' : `Upgrade ${formatCompact(upgrade.nextCost)}`}
+                      {upgrade.isMaxed
+                        ? 'Maxed'
+                        : upgrade.missingShards
+                          ? `Need ${formatCompact(upgrade.shardRequirement)} shards`
+                          : upgrade.canAfford
+                            ? `Upgrade ${formatCompact(upgrade.nextCost)}`
+                            : `Need ${formatCompact(upgrade.nextCost)} chroma`}
                     </button>
                   </article>
                 ))}
@@ -367,6 +428,14 @@ function App() {
                   <span>Restoration/sec</span>
                   <strong>{formatCompact(economy.restorationGainPerSec)}</strong>
                 </article>
+                <article>
+                  <span>Momentum</span>
+                  <strong>{formatPercent(momentum * 100)}</strong>
+                </article>
+                <article>
+                  <span>Output Boost</span>
+                  <strong>{formatPercent(outputBoostPercent)}</strong>
+                </article>
               </div>
             </div>
           )}
@@ -389,13 +458,14 @@ function App() {
         </aside>
       )}
 
-      {lastPrestigeGain !== null && (
+      {lastPrestigeResult !== null && (
         <aside className="toast">
-          Prestige complete: +{lastPrestigeGain} Prism Shards
+          Prestige complete: +{lastPrestigeResult.earnedShards} Prism Shards, +
+          {formatCompact(lastPrestigeResult.launchChroma)} launch chroma
           <button
             type="button"
             onClick={() => {
-              setLastPrestigeGain(null)
+              setLastPrestigeResult(null)
             }}
           >
             Dismiss

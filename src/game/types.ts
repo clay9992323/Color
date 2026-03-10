@@ -7,10 +7,14 @@ export interface Vec2 {
   y: number
 }
 
+export type BuildingPlacement = 'ground' | 'orbital'
+
 export interface BuildingDefinition {
   id: string
   name: string
   unlockAtTotalTiers: number
+  unlockAtPrismShards: number
+  placement: BuildingPlacement
   color: string
 }
 
@@ -21,6 +25,11 @@ export interface BuildingUpgradeOption {
   lane: UpgradeLaneId
 }
 
+export interface UpgradePrestigeGate {
+  tier: number
+  minShards: number
+}
+
 export interface UpgradeLaneDefinition {
   id: UpgradeLaneId
   name: string
@@ -28,6 +37,7 @@ export interface UpgradeLaneDefinition {
   baseCost: number
   growth: number
   maxTier: number
+  prestigeGates: UpgradePrestigeGate[]
 }
 
 export interface WorkforceState {
@@ -62,6 +72,7 @@ export interface EconomySnapshot {
   tapGain: number
   autoGainPerSec: number
   restorationGainPerSec: number
+  engagementMultiplier: number
   prestigeMultiplier: number
 }
 
@@ -75,6 +86,9 @@ export interface OfflineGainResult {
 export interface PrestigeResult {
   earnedShards: number
   newTotalShards: number
+  launchChroma: number
+  launchMomentum: number
+  launchSurgeSeconds: number
   newMultiplier: number
 }
 
@@ -93,6 +107,8 @@ export interface GameState {
   chroma: number
   restorationPoints: number
   restorationPercent: number
+  momentum: number
+  unlockSurgeSeconds: number
   prismShards: number
   prestigeMultiplier: number
   upgrades: Record<UpgradeLaneId, number>

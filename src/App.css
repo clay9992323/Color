@@ -46,7 +46,7 @@
   width: 100%;
   height: 100%;
   display: block;
-  touch-action: manipulation;
+  touch-action: none;
 }
 
 .hud-panel {
@@ -79,6 +79,31 @@
   margin-top: 0.24rem;
   font-size: 0.8rem;
   font-weight: 600;
+}
+
+.mission-progress {
+  display: block;
+  margin-top: 0.18rem;
+  font-size: 0.62rem;
+  color: rgba(214, 228, 255, 0.86);
+}
+
+.mission-bonus {
+  display: block;
+  margin-top: 0.22rem;
+  font-size: 0.64rem;
+  color: rgba(161, 244, 255, 0.95);
+}
+
+.mission-bonus.muted {
+  color: var(--text-2);
+}
+
+.mission-prestige {
+  display: block;
+  margin-top: 0.16rem;
+  font-size: 0.62rem;
+  color: rgba(255, 222, 172, 0.92);
 }
 
 .top-right-meta {
@@ -161,7 +186,7 @@
   right: 0.45rem;
   bottom: 0.45rem;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.34rem;
   padding: 0.42rem;
   border-radius: 0.8rem;
@@ -279,6 +304,15 @@
 .building-upgrade-card small {
   color: var(--text-2);
   font-size: 0.62rem;
+}
+
+.upgrade-gate {
+  display: block;
+  margin-top: 0.2rem;
+}
+
+.upgrade-gate.locked {
+  color: #ffd5d5;
 }
 
 .building-upgrade-card button {

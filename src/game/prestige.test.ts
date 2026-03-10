@@ -7,6 +7,9 @@ describe('prestige flow', () => {
     const result = calculatePrestigeResult(120000, 0)
     expect(result.earnedShards).toBeGreaterThan(0)
     expect(result.newTotalShards).toBe(result.earnedShards)
+    expect(result.launchChroma).toBeGreaterThan(0)
+    expect(result.launchMomentum).toBeGreaterThan(0)
+    expect(result.launchSurgeSeconds).toBeGreaterThan(0)
   })
 
   it('hard-resets run progression while retaining permanent shard progression', () => {
@@ -26,11 +29,12 @@ describe('prestige flow', () => {
     const after = store.getState()
 
     expect(result).not.toBeNull()
-    expect(after.chroma).toBe(0)
+    expect(after.chroma).toBeGreaterThan(0)
     expect(after.restorationPoints).toBe(0)
+    expect(after.momentum).toBeGreaterThan(0)
+    expect(after.unlockSurgeSeconds).toBeGreaterThan(0)
     expect(after.totalUpgradesPurchased).toBe(0)
     expect(after.upgrades).toEqual({ extraction: 0, automation: 0, diffusion: 0 })
     expect(after.prismShards).toBeGreaterThan(3)
   })
 })
-

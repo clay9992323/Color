@@ -50,6 +50,7 @@ interface BeaconVisual {
 interface BuildingLayout {
   id: string
   index: number
+  placement: 'ground' | 'orbital'
   worldX: number
   worldY: number
   width: number
@@ -86,11 +87,16 @@ interface Star {
 
 const WORLD_PADDING = 0.42
 const BUILDING_SPACING = 0.46
-const WORLD_WIDTH = WORLD_PADDING * 2 + (BUILDINGS.length - 1) * BUILDING_SPACING
+const GROUND_BUILDING_COUNT = Math.max(
+  1,
+  BUILDINGS.filter((building) => building.placement === 'ground').length,
+)
+const WORLD_WIDTH = WORLD_PADDING * 2 + (GROUND_BUILDING_COUNT - 1) * BUILDING_SPACING
 const EXTRACTION_WORLD_X = WORLD_WIDTH * 0.5
 const EXTRACTION_WORLD_Y = 0.5
 const GROUND_WORLD_Y = 0.82
 const EXTRACTION_ZONE_RADIUS = 0.26
+const ORBITAL_RING_RADIUS = 0.34
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -98,6 +104,43 @@ function clamp(value: number, min: number, max: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
+}
+
+function createSlotOrder(count: number): number[] {
+  const centerLeft = Math.floor((count - 1) * 0.5)
+  const order: number[] = [centerLeft]
+  let offset = 1
+  while (order.length < count) {
+    const right = centerLeft + offset
+    if (right < count) {
+      order.push(right)
+    }
+    const left = centerLeft - offset
+    if (left >= 0) {
+      order.push(left)
+    }
+    offset += 1
+  }
+  return order
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const clean = hex.replace('#', '')
+  const normalized =
+    clean.length === 3
+      ? clean
+          .split('')
+          .map((part) => part + part)
+          .join('')
+      : clean
+  const r = Number.parseInt(normalized.slice(0, 2), 16)
+  const g = Number.parseInt(normalized.slice(2, 4), 16)
+  const b = Number.parseInt(normalized.slice(4, 6), 16)
+  return { r, g, b }
+}
+
+function mixChannel(a: number, b: number, t: number): number {
+  return Math.round(a + (b - a) * t)
 }
 
 function seeded(index: number, salt: number): number {
@@ -193,8 +236,10 @@ function drawBuilding(
   const left = x - width / 2
   const top = baseY - height
 
+  const rgb = hexToRgb(layout.color)
+  const colorMix = 0.66 + tint * 0.2
   const body = colored
-    ? `rgba(${Math.floor(120 + tint * 80)}, ${Math.floor(130 + tint * 100)}, ${Math.floor(146 + tint * 90)}, 0.9)`
+    ? `rgba(${mixChannel(106, rgb.r, colorMix)}, ${mixChannel(112, rgb.g, colorMix)}, ${mixChannel(126, rgb.b, colorMix)}, 0.94)`
     : 'rgba(115, 123, 140, 0.62)'
   ctx.fillStyle = body
   ctx.strokeStyle = focused ? 'rgba(255, 252, 236, 0.85)' : 'rgba(220, 232, 255, 0.28)'
@@ -216,15 +261,35 @@ function drawBuilding(
     ctx.fill()
   } else {
     ctx.fillRect(left + width * 0.33, top - height * 0.28, width * 0.34, height * 0.28)
-    ctx.strokeStyle = 'rgba(224, 236, 255, 0.35)'
+    ctx.strokeStyle = colored
+      ? `rgba(${mixChannel(160, rgb.r, 0.35)}, ${mixChannel(182, rgb.g, 0.35)}, ${mixChannel(210, rgb.b, 0.35)}, 0.42)`
+      : 'rgba(224, 236, 255, 0.35)'
     ctx.beginPath()
     ctx.moveTo(left + width * 0.5, top - height * 0.28)
     ctx.lineTo(left + width * 0.5, top - height * 0.52)
     ctx.stroke()
   }
 
-  const glow = colored ? 0.2 + tint * 0.4 : 0.1
-  ctx.fillStyle = `rgba(176, 220, 255, ${glow})`
+  if (layout.placement === 'orbital') {
+    ctx.fillStyle = colored
+      ? `rgba(${mixChannel(150, rgb.r, 0.35)}, ${mixChannel(180, rgb.g, 0.35)}, ${mixChannel(220, rgb.b, 0.35)}, 0.9)`
+      : 'rgba(125, 135, 160, 0.65)'
+    ctx.beginPath()
+    ctx.ellipse(x, baseY + height * 0.06, width * 0.42, height * 0.08, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = colored
+      ? `rgba(${mixChannel(175, rgb.r, 0.45)}, ${mixChannel(210, rgb.g, 0.45)}, ${mixChannel(235, rgb.b, 0.45)}, 0.45)`
+      : 'rgba(210, 222, 245, 0.3)'
+    ctx.beginPath()
+    ctx.moveTo(x - width * 0.34, baseY + height * 0.06)
+    ctx.lineTo(x + width * 0.34, baseY + height * 0.06)
+    ctx.stroke()
+  }
+
+  const glow = colored ? 0.28 + tint * 0.46 : 0.1
+  ctx.fillStyle = colored
+    ? `rgba(${mixChannel(170, rgb.r, 0.25)}, ${mixChannel(210, rgb.g, 0.25)}, ${mixChannel(232, rgb.b, 0.25)}, ${glow})`
+    : `rgba(176, 220, 255, ${glow})`
   const windowRows = 3
   const windowCols = 3
   for (let row = 0; row < windowRows; row += 1) {
@@ -237,10 +302,12 @@ function drawBuilding(
 
   if (colored) {
     const pulse = 0.4 + Math.sin(now * 0.002 + layout.index) * 0.24
-    ctx.strokeStyle = `rgba(131, 244, 255, ${0.12 + pulse * 0.35})`
+    const beamStartY =
+      layout.placement === 'orbital' ? baseY - height * 0.18 : top - height * 0.52
+    ctx.strokeStyle = `rgba(${mixChannel(131, rgb.r, 0.62)}, ${mixChannel(244, rgb.g, 0.62)}, ${mixChannel(255, rgb.b, 0.62)}, ${0.12 + pulse * 0.35})`
     ctx.lineWidth = Math.max(1, metrics.scale * 0.0018 * camera.zoom)
     ctx.beginPath()
-    ctx.moveTo(x, top - height * 0.52)
+    ctx.moveTo(x, beamStartY)
     ctx.lineTo(worldToScreenX(EXTRACTION_WORLD_X, camera, metrics), worldToScreenY(EXTRACTION_WORLD_Y, camera, metrics))
     ctx.stroke()
   }
@@ -330,16 +397,50 @@ export function ExtractionCanvas({
   )
 
   const buildings = useMemo<BuildingLayout[]>(
-    () =>
-      BUILDINGS.map((building, index) => ({
-        id: building.id,
-        index,
-        worldX: WORLD_PADDING + index * BUILDING_SPACING,
-        worldY: GROUND_WORLD_Y,
-        width: 0.13 + (index % 2) * 0.02,
-        height: 0.16 + ((index + 1) % 3) * 0.04,
-        color: building.color,
-      })),
+    () => {
+      const groundBuildings = BUILDINGS.filter((building) => building.placement === 'ground')
+      const orbitalBuildings = BUILDINGS.filter((building) => building.placement === 'orbital')
+      const groundSlots = createSlotOrder(Math.max(1, groundBuildings.length))
+      const orbitalCount = Math.max(1, orbitalBuildings.length)
+      const orbitStartAngle = -Math.PI * 0.92
+      const orbitEndAngle = -Math.PI * 0.08
+
+      return BUILDINGS.map((building, index) => {
+        if (building.placement === 'orbital') {
+          const orbitalIndex =
+            BUILDINGS.slice(0, index + 1).filter((entry) => entry.placement === 'orbital')
+              .length - 1
+          const t = orbitalCount === 1 ? 0.5 : orbitalIndex / (orbitalCount - 1)
+          const angle = lerp(orbitStartAngle, orbitEndAngle, t)
+          const worldX = EXTRACTION_WORLD_X + Math.cos(angle) * ORBITAL_RING_RADIUS
+          const worldY = EXTRACTION_WORLD_Y + Math.sin(angle) * ORBITAL_RING_RADIUS
+          return {
+            id: building.id,
+            index,
+            placement: building.placement,
+            worldX,
+            worldY,
+            width: 0.11 + (orbitalIndex % 2) * 0.01,
+            height: 0.12 + ((orbitalIndex + 1) % 2) * 0.02,
+            color: building.color,
+          }
+        }
+
+        const groundIndex =
+          BUILDINGS.slice(0, index + 1).filter((entry) => entry.placement === 'ground').length - 1
+        const slot = groundSlots[groundIndex] ?? 0
+        return {
+          id: building.id,
+          index,
+          placement: building.placement,
+          worldX: WORLD_PADDING + slot * BUILDING_SPACING,
+          worldY: GROUND_WORLD_Y,
+          width: 0.13 + (groundIndex % 2) * 0.02,
+          height: 0.16 + ((groundIndex + 1) % 3) * 0.04,
+          color: building.color,
+        }
+      })
+    },
     [],
   )
 
@@ -444,8 +545,16 @@ export function ExtractionCanvas({
       const selectedBuilding = props.selectedBuildingId
         ? buildingById.get(props.selectedBuildingId) ?? null
         : null
-      const targetZoom = selectedBuilding ? 1.45 : 1
-      const targetY = selectedBuilding ? GROUND_WORLD_Y - 0.12 : 0.58
+      const targetZoom = selectedBuilding
+        ? selectedBuilding.placement === 'orbital'
+          ? 1.52
+          : 1.45
+        : 1
+      const targetY = selectedBuilding
+        ? selectedBuilding.placement === 'orbital'
+          ? EXTRACTION_WORLD_Y - 0.06
+          : GROUND_WORLD_Y - 0.12
+        : 0.58
       const unclampedTargetX = selectedBuilding ? selectedBuilding.worldX : panTargetRef.current
       const targetX = clampCameraX(unclampedTargetX, targetZoom, metrics)
 
@@ -542,6 +651,13 @@ export function ExtractionCanvas({
         ctx.arc(zoneX, zoneY, arcRadius, sweep * Math.PI * 2, sweep * Math.PI * 2 + Math.PI * 0.62)
         ctx.stroke()
       }
+
+      const orbitalRingRadiusPx = ORBITAL_RING_RADIUS * metrics.scale * camera.zoom
+      ctx.strokeStyle = `rgba(170, 188, 220, ${0.16 + tint * 0.22})`
+      ctx.lineWidth = Math.max(1, metrics.scale * camera.zoom * 0.0022)
+      ctx.beginPath()
+      ctx.arc(zoneX, zoneY, orbitalRingRadiusPx, -Math.PI * 0.94, -Math.PI * 0.06)
+      ctx.stroke()
 
       const groundY = worldToScreenY(GROUND_WORLD_Y, camera, metrics)
       const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
@@ -714,9 +830,13 @@ export function ExtractionCanvas({
     if (Math.abs(dx) > 1.5) {
       drag.moved = true
     }
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const renderScaleX = rect.width > 0 ? canvas.width / rect.width : 1
     const metrics = metricsRef.current
     const camera = cameraRef.current
-    const worldDelta = dx / (metrics.scale * camera.zoom)
+    const worldDelta = (dx * renderScaleX) / (metrics.scale * camera.zoom)
     const targetX = clampCameraX(panTargetRef.current - worldDelta, camera.zoom, metrics)
     panTargetRef.current = targetX
 
