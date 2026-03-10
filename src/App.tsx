@@ -4,7 +4,6 @@ import {
   BUILDINGS,
   BUILDING_UPGRADE_OPTIONS,
   GAME_TITLE,
-  RESTORATION_TARGET_POINTS,
   SAVE_INTERVAL_MS,
   TICK_RATE_HZ,
   UPGRADE_LANES,
@@ -41,11 +40,9 @@ function App() {
   const restorationPercent = useGameStore((state) => state.restorationPercent)
   const restorationPoints = useGameStore((state) => state.restorationPoints)
   const momentum = useGameStore((state) => state.momentum)
-  const unlockSurgeSeconds = useGameStore((state) => state.unlockSurgeSeconds)
   const prismShards = useGameStore((state) => state.prismShards)
   const prestigeMultiplier = useGameStore((state) => state.prestigeMultiplier)
   const upgrades = useGameStore((state) => state.upgrades)
-  const totalUpgradesPurchased = useGameStore((state) => state.totalUpgradesPurchased)
   const unlockedBuildings = useGameStore((state) => state.unlockedBuildings)
   const workforce = useGameStore((state) => state.workforce)
   const agents = useGameStore((state) => state.agents)
@@ -102,26 +99,19 @@ function App() {
   )
 
   const nextBuilding = BUILDINGS[unlockedBuildings]
-  const nextTierProgress = nextBuilding
-    ? `${Math.min(totalUpgradesPurchased, nextBuilding.unlockAtTotalTiers)}/${nextBuilding.unlockAtTotalTiers} tiers`
-    : null
-  const nextShardProgress =
-    nextBuilding && nextBuilding.unlockAtPrismShards > 0
-      ? `${Math.min(prismShards, nextBuilding.unlockAtPrismShards)}/${nextBuilding.unlockAtPrismShards} shards`
-      : null
   const outputBoostPercent = Math.max(0, (economy.engagementMultiplier - 1) * 100)
   const prestigeRewardNow = calculatePrestigeReward(restorationPoints, prismShards)
-  const prestigeRewardAt125 = calculatePrestigeReward(
-    Math.max(restorationPoints, RESTORATION_TARGET_POINTS * 1.25),
-    prismShards,
-  )
-  const selectedBuilding = selectedBuildingId
-    ? BUILDINGS.find((building) => building.id === selectedBuildingId) ?? null
-    : null
   const unlockedBuildingIds = useMemo(
-    () => BUILDINGS.slice(0, unlockedBuildings).map((building) => building.id),
+    () =>
+      BUILDINGS.slice(0, unlockedBuildings)
+        .filter((building) => building.placement === 'ground')
+        .map((building) => building.id),
     [unlockedBuildings],
   )
+  const selectedBuilding =
+    selectedBuildingId && unlockedBuildingIds.includes(selectedBuildingId)
+      ? BUILDINGS.find((building) => building.id === selectedBuildingId) ?? null
+      : null
   const selectedBuildingIndex = selectedBuilding
     ? BUILDINGS.findIndex((building) => building.id === selectedBuilding.id)
     : -1
@@ -228,7 +218,6 @@ function App() {
         />
 
         <div className="mission-card hud-panel">
-          <span className="label">Mission</span>
           {nextBuilding ? (
             <strong>
               Unlock {nextBuilding.name} @ {nextBuilding.unlockAtTotalTiers} tiers
@@ -239,24 +228,6 @@ function App() {
           ) : (
             <strong>All sectors colorized. Ready for prestige.</strong>
           )}
-          {nextBuilding && (
-            <small className="mission-progress">
-              {nextTierProgress}
-              {nextShardProgress ? ` - ${nextShardProgress}` : ''}
-            </small>
-          )}
-          <small className={`mission-bonus ${outputBoostPercent <= 0.1 ? 'muted' : ''}`}>
-            {outputBoostPercent > 0.1
-              ? `Output Boost +${outputBoostPercent.toFixed(0)}%${
-                  unlockSurgeSeconds > 0
-                    ? ` - Surge ${Math.ceil(unlockSurgeSeconds)}s`
-                    : ` - Momentum ${Math.round(momentum * 100)}%`
-                }`
-              : 'Build momentum by tapping and buying upgrades.'}
-          </small>
-          <small className="mission-prestige">
-            Prestige now +{prestigeRewardNow} shards (125%: +{prestigeRewardAt125})
-          </small>
         </div>
 
         <div className="top-right-meta hud-panel">
@@ -284,22 +255,21 @@ function App() {
           </article>
         </aside>
 
-        <button className="extract-fab" type="button" onClick={handleExtract}>
-          Extract +{economy.tapGain.toFixed(1)}
-        </button>
-
         <footer className="command-dock">
-          <button type="button" onClick={() => togglePanel('crew')}>
+          <button className="dock-extract" type="button" onClick={handleExtract}>
+            Extract +{economy.tapGain.toFixed(1)}
+          </button>
+          <button className="dock-crew" type="button" onClick={() => togglePanel('crew')}>
             Crew
           </button>
-          <button type="button" onClick={() => togglePanel('systems')}>
+          <button className="dock-systems" type="button" onClick={() => togglePanel('systems')}>
             Systems
           </button>
           <button
+            className={restorationPercent >= 100 ? 'dock-prestige ready' : 'dock-prestige'}
             type="button"
             disabled={restorationPercent < 100}
             onClick={handlePrestige}
-            className={restorationPercent >= 100 ? 'ready' : ''}
           >
             {restorationPercent >= 100 ? `Prestige +${prestigeRewardNow}` : 'Prestige'}
           </button>
@@ -396,8 +366,11 @@ function App() {
                 ))}
               </div>
               <div className="building-row">
-                {BUILDINGS.map((building, index) => (
-                  <span key={building.id} className={index < unlockedBuildings ? 'on' : ''}>
+                {BUILDINGS.filter((building) => building.placement === 'ground').map((building) => (
+                  <span
+                    key={building.id}
+                    className={unlockedBuildingIds.includes(building.id) ? 'on' : ''}
+                  >
                     {building.name}
                   </span>
                 ))}

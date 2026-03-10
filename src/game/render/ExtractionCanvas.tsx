@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, type PointerEventHandler } from 'react'
 import { BUILDINGS, MAX_BEACONS, MAX_PARTICLES, MAX_VISIBLE_OPERATORS } from '../config'
 import type { OperatorAgent, SquadBeacon, WorkforceState } from '../types'
+import orbCoreImageSrc from '../../assets/vfx/Orb_1.png'
+import backgroundImageSrc from '../../assets/vfx/Background.png'
+import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control.png'
+import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab.png'
+import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier.png'
+import harmonizerBuildingImageSrc from '../../assets/vfx/Building_Spectrum_Harmonizer.png'
 
 interface CanvasProps {
   restorationPercent: number
@@ -53,6 +59,8 @@ interface BuildingLayout {
   placement: 'ground' | 'orbital'
   worldX: number
   worldY: number
+  orbitRadius: number
+  orbitAngle: number
   width: number
   height: number
   color: string
@@ -85,18 +93,78 @@ interface Star {
   speed: number
 }
 
+interface GroundBuildingSpriteConfig {
+  sourceWidth: number
+  sourceHeight: number
+  x: number
+  y: number
+  width: number
+  height: number
+  scale: number
+  groundOffset: number
+}
+
 const WORLD_PADDING = 0.42
-const BUILDING_SPACING = 0.46
+const BUILDING_SPACING = 0.82
+const GROUND_BUILDING_ORB_CLEARANCE = 0.64
 const GROUND_BUILDING_COUNT = Math.max(
   1,
   BUILDINGS.filter((building) => building.placement === 'ground').length,
 )
 const WORLD_WIDTH = WORLD_PADDING * 2 + (GROUND_BUILDING_COUNT - 1) * BUILDING_SPACING
 const EXTRACTION_WORLD_X = WORLD_WIDTH * 0.5
-const EXTRACTION_WORLD_Y = 0.5
-const GROUND_WORLD_Y = 0.82
+const GROUND_WORLD_Y = 1.14
 const EXTRACTION_ZONE_RADIUS = 0.26
-const ORBITAL_RING_RADIUS = 0.34
+const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS
+const BACKGROUND_ZOOM_OUT = 0.86
+const GROUND_BUILDING_SPRITE_ASSETS: Record<string, string> = {
+  mission: missionBuildingImageSrc,
+  research: researchBuildingImageSrc,
+  purifier: purifierBuildingImageSrc,
+  harmonizer: harmonizerBuildingImageSrc,
+}
+const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> = {
+  mission: {
+    sourceWidth: 601,
+    sourceHeight: 1024,
+    x: 0,
+    y: 54,
+    width: 575,
+    height: 970,
+    scale: 1.78,
+    groundOffset: 0.13,
+  },
+  research: {
+    sourceWidth: 601,
+    sourceHeight: 1024,
+    x: 27,
+    y: 55,
+    width: 550,
+    height: 897,
+    scale: 1.82,
+    groundOffset: 0,
+  },
+  purifier: {
+    sourceWidth: 601,
+    sourceHeight: 1024,
+    x: 50,
+    y: 112,
+    width: 501,
+    height: 819,
+    scale: 1.86,
+    groundOffset: 0,
+  },
+  harmonizer: {
+    sourceWidth: 601,
+    sourceHeight: 1024,
+    x: 23,
+    y: 56,
+    width: 557,
+    height: 907,
+    scale: 1.78,
+    groundOffset: 0,
+  },
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -219,6 +287,26 @@ function drawGreyCity(
   ctx.fillRect(0, horizonY - metrics.height * 0.24, metrics.width, metrics.height * 0.3)
 }
 
+function drawLockGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  bright: boolean,
+): void {
+  const w = size
+  const h = size * 0.72
+  ctx.fillStyle = bright ? 'rgba(226, 237, 255, 0.92)' : 'rgba(98, 106, 126, 0.95)'
+  ctx.beginPath()
+  ctx.roundRect(x - w * 0.5, y - h * 0.2, w, h, w * 0.16)
+  ctx.fill()
+  ctx.strokeStyle = bright ? 'rgba(245, 252, 255, 0.9)' : 'rgba(124, 132, 154, 0.7)'
+  ctx.lineWidth = Math.max(1, size * 0.11)
+  ctx.beginPath()
+  ctx.arc(x, y - h * 0.2, w * 0.28, Math.PI * 1.02, Math.PI * 1.98)
+  ctx.stroke()
+}
+
 function drawBuilding(
   ctx: CanvasRenderingContext2D,
   layout: BuildingLayout,
@@ -227,7 +315,7 @@ function drawBuilding(
   colored: boolean,
   focused: boolean,
   tint: number,
-  now: number,
+  buildingSprites: Partial<Record<string, HTMLImageElement>>,
 ): { x: number; y: number; width: number; height: number } {
   const x = worldToScreenX(layout.worldX, camera, metrics)
   const baseY = worldToScreenY(layout.worldY, camera, metrics)
@@ -236,38 +324,143 @@ function drawBuilding(
   const left = x - width / 2
   const top = baseY - height
 
+  const spriteImage = layout.placement === 'ground' ? buildingSprites[layout.id] ?? null : null
+  const hasBuildingSprite =
+    !!spriteImage &&
+    spriteImage.complete &&
+    spriteImage.naturalWidth > 0 &&
+    spriteImage.naturalHeight > 0
+
   const rgb = hexToRgb(layout.color)
   const colorMix = 0.66 + tint * 0.2
-  const body = colored
-    ? `rgba(${mixChannel(106, rgb.r, colorMix)}, ${mixChannel(112, rgb.g, colorMix)}, ${mixChannel(126, rgb.b, colorMix)}, 0.94)`
-    : 'rgba(115, 123, 140, 0.62)'
-  ctx.fillStyle = body
-  ctx.strokeStyle = focused ? 'rgba(255, 252, 236, 0.85)' : 'rgba(220, 232, 255, 0.28)'
-  ctx.lineWidth = Math.max(1, metrics.scale * 0.0026 * camera.zoom)
-  ctx.beginPath()
-  ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
-  ctx.fill()
-  ctx.stroke()
-
-  if (layout.index % 3 === 0) {
-    ctx.fillRect(left + width * 0.16, top - height * 0.26, width * 0.24, height * 0.26)
-    ctx.fillRect(left + width * 0.64, top - height * 0.36, width * 0.2, height * 0.36)
-  } else if (layout.index % 3 === 1) {
+  if (!hasBuildingSprite) {
+    const body = colored
+      ? `rgba(${mixChannel(106, rgb.r, colorMix)}, ${mixChannel(112, rgb.g, colorMix)}, ${mixChannel(126, rgb.b, colorMix)}, 0.94)`
+      : 'rgba(115, 123, 140, 0.62)'
+    ctx.fillStyle = body
+    ctx.strokeStyle = focused ? 'rgba(255, 252, 236, 0.85)' : 'rgba(220, 232, 255, 0.28)'
+    ctx.lineWidth = Math.max(1, metrics.scale * 0.0026 * camera.zoom)
     ctx.beginPath()
-    ctx.moveTo(left + width * 0.1, top)
-    ctx.lineTo(left + width * 0.5, top - height * 0.34)
-    ctx.lineTo(left + width * 0.9, top)
-    ctx.closePath()
+    ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
     ctx.fill()
-  } else {
-    ctx.fillRect(left + width * 0.33, top - height * 0.28, width * 0.34, height * 0.28)
+    ctx.stroke()
+  }
+
+  if (hasBuildingSprite && spriteImage) {
+    const config = GROUND_BUILDING_SPRITE_CONFIG[layout.id]
+    const frameW = Math.max(1, width)
+    const frameH = Math.max(1, height)
+    const hasExpectedSourceShape =
+      !!config &&
+      spriteImage.naturalWidth === config.sourceWidth &&
+      spriteImage.naturalHeight === config.sourceHeight
+    const sourceX = hasExpectedSourceShape && config ? config.x : 0
+    const sourceY = hasExpectedSourceShape && config ? config.y : 0
+    const sourceW = hasExpectedSourceShape && config ? config.width : spriteImage.naturalWidth
+    const sourceH = hasExpectedSourceShape && config ? config.height : spriteImage.naturalHeight
+    const baseScale = Math.min(frameW / sourceW, frameH / sourceH)
+    const scale = baseScale * (config?.scale ?? 1.2)
+    const drawW = sourceW * scale
+    const drawH = sourceH * scale
+    const drawX = x - drawW * 0.5
+    const drawY = baseY - drawH + height * (config?.groundOffset ?? 0.015)
+
+    ctx.save()
+    if (!colored) {
+      ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.78)'
+    }
+    ctx.drawImage(spriteImage, sourceX, sourceY, sourceW, sourceH, drawX, drawY, drawW, drawH)
+    ctx.filter = 'none'
+    ctx.restore()
+  }
+
+  if (layout.placement === 'orbital') {
+    const nodeY = baseY + height * 0.06
+    const podWidth = width * 0.84
+    const podHeight = height * 0.32
+    ctx.fillStyle = colored
+      ? `rgba(${mixChannel(128, rgb.r, 0.48)}, ${mixChannel(144, rgb.g, 0.48)}, ${mixChannel(168, rgb.b, 0.48)}, 0.95)`
+      : 'rgba(124, 133, 152, 0.74)'
+    ctx.beginPath()
+    ctx.ellipse(x, nodeY, podWidth * 0.5, podHeight * 0.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    if (layout.id === 'laser') {
+      ctx.fillRect(left + width * 0.58, top + height * 0.12, width * 0.34, height * 0.16)
+      ctx.beginPath()
+      ctx.moveTo(left + width * 0.9, top + height * 0.18)
+      ctx.lineTo(left + width * 1.02, top + height * 0.15)
+      ctx.lineTo(left + width * 0.9, top + height * 0.23)
+      ctx.closePath()
+      ctx.fill()
+    } else if (layout.id === 'drill') {
+      ctx.fillRect(left + width * 0.08, top + height * 0.12, width * 0.48, height * 0.18)
+      ctx.beginPath()
+      ctx.moveTo(left + width * 0.08, top + height * 0.21)
+      ctx.lineTo(left - width * 0.1, top + height * 0.17)
+      ctx.lineTo(left + width * 0.08, top + height * 0.11)
+      ctx.closePath()
+      ctx.fill()
+    } else if (layout.id === 'siphon') {
+      ctx.beginPath()
+      ctx.arc(x, top + height * 0.2, width * 0.24, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = colored
+        ? `rgba(${mixChannel(180, rgb.r, 0.4)}, ${mixChannel(210, rgb.g, 0.4)}, ${mixChannel(238, rgb.b, 0.4)}, 0.46)`
+        : 'rgba(211, 220, 242, 0.32)'
+      ctx.lineWidth = Math.max(1, metrics.scale * 0.0019 * camera.zoom)
+      ctx.beginPath()
+      ctx.arc(x, top + height * 0.2, width * 0.34, 0, Math.PI * 2)
+      ctx.stroke()
+    } else if (layout.id === 'anchor') {
+      ctx.fillRect(left + width * 0.24, top + height * 0.07, width * 0.52, height * 0.22)
+      ctx.beginPath()
+      ctx.arc(left + width * 0.2, top + height * 0.19, width * 0.14, 0, Math.PI * 2)
+      ctx.arc(left + width * 0.82, top + height * 0.19, width * 0.14, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    if (!colored) {
+      drawLockGlyph(ctx, x, top + height * 0.22, width * 0.2, false)
+    }
+  } else if (!hasBuildingSprite && layout.id === 'mission') {
+    ctx.fillRect(left + width * 0.1, top - height * 0.24, width * 0.26, height * 0.24)
+    ctx.fillRect(left + width * 0.66, top - height * 0.28, width * 0.2, height * 0.28)
+    ctx.fillRect(left + width * 0.4, top - height * 0.2, width * 0.2, height * 0.2)
     ctx.strokeStyle = colored
       ? `rgba(${mixChannel(160, rgb.r, 0.35)}, ${mixChannel(182, rgb.g, 0.35)}, ${mixChannel(210, rgb.b, 0.35)}, 0.42)`
       : 'rgba(224, 236, 255, 0.35)'
     ctx.beginPath()
-    ctx.moveTo(left + width * 0.5, top - height * 0.28)
-    ctx.lineTo(left + width * 0.5, top - height * 0.52)
+    ctx.moveTo(left + width * 0.5, top - height * 0.2)
+    ctx.lineTo(left + width * 0.5, top - height * 0.46)
     ctx.stroke()
+  } else if (!hasBuildingSprite && layout.id === 'research') {
+    ctx.beginPath()
+    ctx.arc(left + width * 0.35, top + height * 0.08, width * 0.18, Math.PI, Math.PI * 2)
+    ctx.arc(left + width * 0.68, top + height * 0.1, width * 0.14, Math.PI, Math.PI * 2)
+    ctx.closePath()
+    ctx.fill()
+    ctx.fillRect(left + width * 0.12, top - height * 0.1, width * 0.2, height * 0.1)
+  } else if (!hasBuildingSprite && layout.id === 'purifier') {
+    ctx.fillRect(left + width * 0.2, top - height * 0.3, width * 0.16, height * 0.3)
+    ctx.fillRect(left + width * 0.45, top - height * 0.24, width * 0.16, height * 0.24)
+    ctx.fillRect(left + width * 0.68, top - height * 0.34, width * 0.12, height * 0.34)
+  } else if (!hasBuildingSprite && layout.id === 'harmonizer') {
+    ctx.beginPath()
+    ctx.moveTo(left + width * 0.08, top)
+    ctx.lineTo(left + width * 0.5, top - height * 0.32)
+    ctx.lineTo(left + width * 0.92, top)
+    ctx.closePath()
+    ctx.fill()
+    ctx.strokeStyle = colored
+      ? `rgba(${mixChannel(160, rgb.r, 0.35)}, ${mixChannel(182, rgb.g, 0.35)}, ${mixChannel(210, rgb.b, 0.35)}, 0.42)`
+      : 'rgba(224, 236, 255, 0.35)'
+    ctx.beginPath()
+    ctx.arc(x, top - height * 0.12, width * 0.26, Math.PI, Math.PI * 2)
+    ctx.stroke()
+  } else if (!hasBuildingSprite) {
+    ctx.fillRect(left + width * 0.16, top - height * 0.24, width * 0.24, height * 0.24)
+    ctx.fillRect(left + width * 0.64, top - height * 0.3, width * 0.2, height * 0.3)
   }
 
   if (layout.placement === 'orbital') {
@@ -286,30 +479,32 @@ function drawBuilding(
     ctx.stroke()
   }
 
-  const glow = colored ? 0.28 + tint * 0.46 : 0.1
-  ctx.fillStyle = colored
-    ? `rgba(${mixChannel(170, rgb.r, 0.25)}, ${mixChannel(210, rgb.g, 0.25)}, ${mixChannel(232, rgb.b, 0.25)}, ${glow})`
-    : `rgba(176, 220, 255, ${glow})`
-  const windowRows = 3
-  const windowCols = 3
-  for (let row = 0; row < windowRows; row += 1) {
-    for (let col = 0; col < windowCols; col += 1) {
-      const wx = left + width * (0.14 + col * 0.26)
-      const wy = top + height * (0.22 + row * 0.22)
-      ctx.fillRect(wx, wy, width * 0.12, height * 0.08)
-    }
+  if (!colored && layout.placement === 'ground') {
+    drawLockGlyph(ctx, x, top + height * 0.2, width * 0.16, false)
   }
 
-  if (colored) {
-    const pulse = 0.4 + Math.sin(now * 0.002 + layout.index) * 0.24
-    const beamStartY =
-      layout.placement === 'orbital' ? baseY - height * 0.18 : top - height * 0.52
-    ctx.strokeStyle = `rgba(${mixChannel(131, rgb.r, 0.62)}, ${mixChannel(244, rgb.g, 0.62)}, ${mixChannel(255, rgb.b, 0.62)}, ${0.12 + pulse * 0.35})`
-    ctx.lineWidth = Math.max(1, metrics.scale * 0.0018 * camera.zoom)
+  if (hasBuildingSprite && focused) {
+    ctx.strokeStyle = 'rgba(255, 252, 236, 0.85)'
+    ctx.lineWidth = Math.max(1, metrics.scale * 0.0024 * camera.zoom)
     ctx.beginPath()
-    ctx.moveTo(x, beamStartY)
-    ctx.lineTo(worldToScreenX(EXTRACTION_WORLD_X, camera, metrics), worldToScreenY(EXTRACTION_WORLD_Y, camera, metrics))
+    ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
     ctx.stroke()
+  }
+
+  if (!hasBuildingSprite) {
+    const glow = colored ? 0.28 + tint * 0.46 : 0.1
+    ctx.fillStyle = colored
+      ? `rgba(${mixChannel(170, rgb.r, 0.25)}, ${mixChannel(210, rgb.g, 0.25)}, ${mixChannel(232, rgb.b, 0.25)}, ${glow})`
+      : `rgba(176, 220, 255, ${glow})`
+    const windowRows = 3
+    const windowCols = 3
+    for (let row = 0; row < windowRows; row += 1) {
+      for (let col = 0; col < windowCols; col += 1) {
+        const wx = left + width * (0.14 + col * 0.26)
+        const wy = top + height * (0.22 + row * 0.22)
+        ctx.fillRect(wx, wy, width * 0.12, height * 0.08)
+      }
+    }
   }
 
   return { x: left, y: top, width, height }
@@ -348,8 +543,11 @@ export function ExtractionCanvas({
   })
   const lastFrameTime = useRef<number>(0)
   const metricsRef = useRef<SceneMetrics>({ width: 1, height: 1, scale: 1 })
-  const cameraRef = useRef<CameraState>({ x: EXTRACTION_WORLD_X, y: 0.58, zoom: 1 })
+  const cameraRef = useRef<CameraState>({ x: EXTRACTION_WORLD_X, y: 0.52, zoom: 1 })
   const panTargetRef = useRef<number>(EXTRACTION_WORLD_X)
+  const orbImageRef = useRef<HTMLImageElement | null>(null)
+  const backgroundImageRef = useRef<HTMLImageElement | null>(null)
+  const groundBuildingImageRefs = useRef<Partial<Record<string, HTMLImageElement>>>({})
   const dragRef = useRef<DragState>({
     active: false,
     pointerId: -1,
@@ -399,47 +597,38 @@ export function ExtractionCanvas({
   const buildings = useMemo<BuildingLayout[]>(
     () => {
       const groundBuildings = BUILDINGS.filter((building) => building.placement === 'ground')
-      const orbitalBuildings = BUILDINGS.filter((building) => building.placement === 'orbital')
       const groundSlots = createSlotOrder(Math.max(1, groundBuildings.length))
-      const orbitalCount = Math.max(1, orbitalBuildings.length)
-      const orbitStartAngle = -Math.PI * 0.92
-      const orbitEndAngle = -Math.PI * 0.08
+      const layouts: BuildingLayout[] = []
+      let groundIndex = 0
 
-      return BUILDINGS.map((building, index) => {
-        if (building.placement === 'orbital') {
-          const orbitalIndex =
-            BUILDINGS.slice(0, index + 1).filter((entry) => entry.placement === 'orbital')
-              .length - 1
-          const t = orbitalCount === 1 ? 0.5 : orbitalIndex / (orbitalCount - 1)
-          const angle = lerp(orbitStartAngle, orbitEndAngle, t)
-          const worldX = EXTRACTION_WORLD_X + Math.cos(angle) * ORBITAL_RING_RADIUS
-          const worldY = EXTRACTION_WORLD_Y + Math.sin(angle) * ORBITAL_RING_RADIUS
-          return {
-            id: building.id,
-            index,
-            placement: building.placement,
-            worldX,
-            worldY,
-            width: 0.11 + (orbitalIndex % 2) * 0.01,
-            height: 0.12 + ((orbitalIndex + 1) % 2) * 0.02,
-            color: building.color,
-          }
+      for (let index = 0; index < BUILDINGS.length; index += 1) {
+        const building = BUILDINGS[index]
+        if (building.placement !== 'ground') {
+          continue
         }
-
-        const groundIndex =
-          BUILDINGS.slice(0, index + 1).filter((entry) => entry.placement === 'ground').length - 1
         const slot = groundSlots[groundIndex] ?? 0
-        return {
+        let worldX = WORLD_PADDING + slot * BUILDING_SPACING
+        const distFromOrb = Math.abs(worldX - EXTRACTION_WORLD_X)
+        if (distFromOrb < GROUND_BUILDING_ORB_CLEARANCE) {
+          const direction = worldX <= EXTRACTION_WORLD_X ? -1 : 1
+          worldX = EXTRACTION_WORLD_X + direction * GROUND_BUILDING_ORB_CLEARANCE
+        }
+        layouts.push({
           id: building.id,
           index,
           placement: building.placement,
-          worldX: WORLD_PADDING + slot * BUILDING_SPACING,
+          worldX,
           worldY: GROUND_WORLD_Y,
-          width: 0.13 + (groundIndex % 2) * 0.02,
-          height: 0.16 + ((groundIndex + 1) % 3) * 0.04,
+          orbitRadius: 0,
+          orbitAngle: 0,
+          width: 0.235 + (groundIndex % 2) * 0.036,
+          height: 0.31 + ((groundIndex + 1) % 3) * 0.07,
           color: building.color,
-        }
-      })
+        })
+        groundIndex += 1
+      }
+
+      return layouts
     },
     [],
   )
@@ -463,6 +652,45 @@ export function ExtractionCanvas({
       })),
     [],
   )
+
+  useEffect(() => {
+    const image = new Image()
+    image.src = orbCoreImageSrc
+    orbImageRef.current = image
+    return () => {
+      if (orbImageRef.current === image) {
+        orbImageRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const image = new Image()
+    image.src = backgroundImageSrc
+    backgroundImageRef.current = image
+    return () => {
+      if (backgroundImageRef.current === image) {
+        backgroundImageRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const loadedImages: Partial<Record<string, HTMLImageElement>> = {}
+    const entries = Object.entries(GROUND_BUILDING_SPRITE_ASSETS)
+    for (let i = 0; i < entries.length; i += 1) {
+      const [id, src] = entries[i]
+      const image = new Image()
+      image.src = src
+      loadedImages[id] = image
+    }
+    groundBuildingImageRefs.current = loadedImages
+    return () => {
+      if (groundBuildingImageRefs.current === loadedImages) {
+        groundBuildingImageRefs.current = {}
+      }
+    }
+  }, [])
 
   useEffect(() => {
     latest.current = {
@@ -554,7 +782,7 @@ export function ExtractionCanvas({
         ? selectedBuilding.placement === 'orbital'
           ? EXTRACTION_WORLD_Y - 0.06
           : GROUND_WORLD_Y - 0.12
-        : 0.58
+        : 0.52
       const unclampedTargetX = selectedBuilding ? selectedBuilding.worldX : panTargetRef.current
       const targetX = clampCameraX(unclampedTargetX, targetZoom, metrics)
 
@@ -570,27 +798,48 @@ export function ExtractionCanvas({
       ctx.save()
       ctx.clearRect(0, 0, metrics.width, metrics.height)
 
-      drawGreyCity(ctx, metrics, camera, tint)
+      const backgroundImage = backgroundImageRef.current
+      const hasBackgroundImage =
+        !!backgroundImage &&
+        backgroundImage.complete &&
+        backgroundImage.naturalWidth > 0 &&
+        backgroundImage.naturalHeight > 0
 
-      for (let i = 0; i < stars.length; i += 1) {
-        const star = stars[i]
-        const flicker = 0.2 + Math.sin(now * 0.001 * star.speed + star.phase) * 0.2
-        ctx.fillStyle = `rgba(198, 207, 222, ${0.1 + flicker * 0.18})`
-        ctx.beginPath()
-        ctx.arc(
-          star.x * metrics.width,
-          star.y * metrics.height,
-          star.radius * metrics.scale,
-          0,
-          Math.PI * 2,
+      if (hasBackgroundImage && backgroundImage) {
+        const coverScale = Math.max(
+          metrics.width / backgroundImage.naturalWidth,
+          metrics.height / backgroundImage.naturalHeight,
         )
-        ctx.fill()
+        const scale = coverScale * BACKGROUND_ZOOM_OUT
+        const drawW = backgroundImage.naturalWidth * scale
+        const drawH = backgroundImage.naturalHeight * scale
+        ctx.fillStyle = '#0f1628'
+        ctx.fillRect(0, 0, metrics.width, metrics.height)
+        const drawX = (metrics.width - drawW) * 0.5
+        const drawY = metrics.height - drawH
+        ctx.drawImage(backgroundImage, drawX, drawY, drawW, drawH)
+      } else {
+        drawGreyCity(ctx, metrics, camera, tint)
+
+        for (let i = 0; i < stars.length; i += 1) {
+          const star = stars[i]
+          const flicker = 0.2 + Math.sin(now * 0.001 * star.speed + star.phase) * 0.2
+          ctx.fillStyle = `rgba(198, 207, 222, ${0.1 + flicker * 0.18})`
+          ctx.beginPath()
+          ctx.arc(
+            star.x * metrics.width,
+            star.y * metrics.height,
+            star.radius * metrics.scale,
+            0,
+            Math.PI * 2,
+          )
+          ctx.fill()
+        }
       }
 
       const zoneX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
       const zoneY = worldToScreenY(EXTRACTION_WORLD_Y, camera, metrics)
       const zoneRadiusPx = EXTRACTION_ZONE_RADIUS * metrics.scale * camera.zoom
-      const zoneRim = Math.max(6, metrics.scale * camera.zoom * 0.08)
 
       const zoneAura = ctx.createRadialGradient(
         zoneX,
@@ -607,57 +856,64 @@ export function ExtractionCanvas({
       ctx.arc(zoneX, zoneY, zoneRadiusPx * 1.25, 0, Math.PI * 2)
       ctx.fill()
 
-      const ringGradient = ctx.createLinearGradient(
-        zoneX - zoneRadiusPx,
-        zoneY - zoneRadiusPx,
-        zoneX + zoneRadiusPx,
-        zoneY + zoneRadiusPx,
-      )
-      ringGradient.addColorStop(0, `rgba(255, 140, 206, ${0.7 + tint * 0.18})`)
-      ringGradient.addColorStop(0.45, `rgba(255, 255, 255, ${0.42 + tint * 0.2})`)
-      ringGradient.addColorStop(0.75, `rgba(124, 230, 255, ${0.7 + tint * 0.16})`)
-      ringGradient.addColorStop(1, `rgba(114, 154, 255, ${0.66 + tint * 0.18})`)
-      ctx.strokeStyle = ringGradient
-      ctx.lineWidth = zoneRim
-      ctx.beginPath()
-      ctx.arc(zoneX, zoneY, zoneRadiusPx, 0, Math.PI * 2)
-      ctx.stroke()
+      const innerRadius = zoneRadiusPx
+      const orbImage = orbImageRef.current
+      if (
+        orbImage &&
+        orbImage.complete &&
+        orbImage.naturalWidth > 0 &&
+        orbImage.naturalHeight > 0
+      ) {
+        const minSide = Math.min(orbImage.naturalWidth, orbImage.naturalHeight)
+        const baseSize = innerRadius * 2
+        const srcScale = baseSize / minSide
+        const drawW = orbImage.naturalWidth * srcScale
+        const drawH = orbImage.naturalHeight * srcScale
+        const pulseScale = 1 + Math.sin(now * 0.00085) * 0.012
+        const finalW = drawW * pulseScale
+        const finalH = drawH * pulseScale
 
-      const innerRadius = zoneRadiusPx - zoneRim * 0.55
-      const liquid = ctx.createRadialGradient(
-        zoneX - innerRadius * 0.34,
-        zoneY - innerRadius * 0.34,
-        innerRadius * 0.05,
-        zoneX,
-        zoneY,
-        innerRadius * 1.1,
-      )
-      liquid.addColorStop(0, `hsla(${baseHue + 30}, ${72 + tint * 18}%, ${66 + tint * 16}%, 0.95)`)
-      liquid.addColorStop(0.35, `hsla(${baseHue - 10}, ${76 + tint * 16}%, ${58 + tint * 14}%, 0.9)`)
-      liquid.addColorStop(0.7, `hsla(${baseHue + 58}, ${78 + tint * 14}%, ${51 + tint * 12}%, 0.88)`)
-      liquid.addColorStop(1, `hsla(${baseHue + 92}, ${60 + tint * 14}%, ${38 + tint * 8}%, 0.84)`)
-      ctx.fillStyle = liquid
-      ctx.beginPath()
-      ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
-      ctx.fill()
-
-      const activityBoost = 0.22 + Math.min(0.4, props.workforce.visibleOperators / 120)
-      ctx.strokeStyle = `rgba(245, 255, 255, ${0.14 + tint * activityBoost})`
-      ctx.lineWidth = Math.max(1, metrics.scale * camera.zoom * 0.0024)
-      for (let i = 0; i < 5; i += 1) {
-        const sweep = (now * 0.00015 + i * 0.21) % 1
-        const arcRadius = innerRadius * (0.42 + i * 0.12)
+        ctx.save()
         ctx.beginPath()
-        ctx.arc(zoneX, zoneY, arcRadius, sweep * Math.PI * 2, sweep * Math.PI * 2 + Math.PI * 0.62)
-        ctx.stroke()
-      }
+        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
+        ctx.clip()
+        ctx.globalAlpha = 0.9 + tint * 0.1
+        ctx.drawImage(orbImage, zoneX - finalW / 2, zoneY - finalH / 2, finalW, finalH)
+        ctx.restore()
 
-      const orbitalRingRadiusPx = ORBITAL_RING_RADIUS * metrics.scale * camera.zoom
-      ctx.strokeStyle = `rgba(170, 188, 220, ${0.16 + tint * 0.22})`
-      ctx.lineWidth = Math.max(1, metrics.scale * camera.zoom * 0.0022)
-      ctx.beginPath()
-      ctx.arc(zoneX, zoneY, orbitalRingRadiusPx, -Math.PI * 0.94, -Math.PI * 0.06)
-      ctx.stroke()
+        const gloss = ctx.createRadialGradient(
+          zoneX - innerRadius * 0.36,
+          zoneY - innerRadius * 0.36,
+          innerRadius * 0.06,
+          zoneX,
+          zoneY,
+          innerRadius * 1.1,
+        )
+        gloss.addColorStop(0, 'rgba(255, 255, 255, 0.28)')
+        gloss.addColorStop(0.4, 'rgba(255, 255, 255, 0.08)')
+        gloss.addColorStop(1, 'rgba(255, 255, 255, 0)')
+        ctx.fillStyle = gloss
+        ctx.beginPath()
+        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
+        ctx.fill()
+      } else {
+        const liquid = ctx.createRadialGradient(
+          zoneX - innerRadius * 0.34,
+          zoneY - innerRadius * 0.34,
+          innerRadius * 0.05,
+          zoneX,
+          zoneY,
+          innerRadius * 1.1,
+        )
+        liquid.addColorStop(0, `hsla(${baseHue + 30}, ${72 + tint * 18}%, ${66 + tint * 16}%, 0.95)`)
+        liquid.addColorStop(0.35, `hsla(${baseHue - 10}, ${76 + tint * 16}%, ${58 + tint * 14}%, 0.9)`)
+        liquid.addColorStop(0.7, `hsla(${baseHue + 58}, ${78 + tint * 14}%, ${51 + tint * 12}%, 0.88)`)
+        liquid.addColorStop(1, `hsla(${baseHue + 92}, ${60 + tint * 14}%, ${38 + tint * 8}%, 0.84)`)
+        ctx.fillStyle = liquid
+        ctx.beginPath()
+        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
+        ctx.fill()
+      }
 
       const groundY = worldToScreenY(GROUND_WORLD_Y, camera, metrics)
       const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
@@ -678,7 +934,16 @@ export function ExtractionCanvas({
         const building = buildings[i]
         const colored = i < props.unlockedBuildings
         const focused = props.selectedBuildingId === building.id
-        const rect = drawBuilding(ctx, building, camera, metrics, colored, focused, tint, now)
+        const rect = drawBuilding(
+          ctx,
+          building,
+          camera,
+          metrics,
+          colored,
+          focused,
+          tint,
+          groundBuildingImageRefs.current,
+        )
         buildingBoxes.push({ building, rect })
       }
 
