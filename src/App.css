@@ -62,7 +62,19 @@
   transform: translateX(-50%);
   width: min(84%, 21rem);
   border-radius: 0.68rem;
-  padding: 0.45rem 0.6rem;
+  padding: 0.56rem 0.75rem;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-color: rgba(150, 196, 255, 0.52);
+  background:
+    linear-gradient(180deg, rgba(26, 41, 74, 0.94), rgba(17, 29, 56, 0.94)),
+    radial-gradient(circle at 50% 0%, rgba(137, 202, 255, 0.18), transparent 60%);
+  box-shadow:
+    0 0 0 1px rgba(154, 214, 255, 0.12) inset,
+    0 10px 20px rgba(4, 9, 20, 0.45);
+  backdrop-filter: blur(8px);
   z-index: 6;
 }
 
@@ -76,9 +88,11 @@
 
 .mission-card strong {
   display: block;
-  margin-top: 0.24rem;
+  margin-top: 0;
   font-size: 0.8rem;
   font-weight: 600;
+  line-height: 1.25;
+  text-wrap: balance;
 }
 
 .mission-progress {
@@ -109,7 +123,7 @@
 .top-right-meta {
   position: absolute;
   right: 0.72rem;
-  top: 4rem;
+  top: 3.6rem;
   border-radius: 0.56rem;
   padding: 0.45rem 0.5rem;
   text-align: right;
@@ -129,7 +143,7 @@
 .left-stack {
   position: absolute;
   left: 0.72rem;
-  top: 4rem;
+  top: 3.6rem;
   width: min(34vw, 7.3rem);
   display: grid;
   gap: 0.4rem;
@@ -580,11 +594,11 @@
   }
 
   .top-right-meta {
-    top: 6.8rem;
+    top: 2.5rem;
   }
 
   .left-stack {
-    top: 7.2rem;
+    top: 2.9rem;
     width: min(32vw, 6.6rem);
   }
 

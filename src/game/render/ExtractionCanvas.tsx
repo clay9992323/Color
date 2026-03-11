@@ -3,6 +3,7 @@ import { BUILDINGS, MAX_BEACONS, MAX_PARTICLES, MAX_VISIBLE_OPERATORS } from '..
 import type { OperatorAgent, SquadBeacon, WorkforceState } from '../types'
 import orbCoreImageSrc from '../../assets/vfx/Orb_1.png'
 import backgroundImageSrc from '../../assets/vfx/Background.png'
+import groundImageSrc from '../../assets/vfx/Ground.png'
 import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control.png'
 import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab.png'
 import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier.png'
@@ -113,10 +114,19 @@ const GROUND_BUILDING_COUNT = Math.max(
 )
 const WORLD_WIDTH = WORLD_PADDING * 2 + (GROUND_BUILDING_COUNT - 1) * BUILDING_SPACING
 const EXTRACTION_WORLD_X = WORLD_WIDTH * 0.5
-const GROUND_WORLD_Y = 1.14
+const GROUND_WORLD_Y = 0.96
+const GROUND_BUILDING_WORLD_Y_OFFSET = 0.13
 const EXTRACTION_ZONE_RADIUS = 0.26
-const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS
+const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS + 0.2
 const BACKGROUND_ZOOM_OUT = 0.86
+// Background.png visible content reaches y=443 in a 559px frame.
+const BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO = 443 / 559
+const BACKGROUND_GROUND_OVERLAP_PX = 1
+const GROUND_IMAGE_SCALE = 1
+// Ground.png has transparent headroom before visible platform content.
+// This ratio aligns the first visible ground pixel to `groundY`.
+const GROUND_IMAGE_TOP_TRIM_RATIO = 115 / 559
+const GROUND_IMAGE_Y_OFFSET = 0
 const GROUND_BUILDING_SPRITE_ASSETS: Record<string, string> = {
   mission: missionBuildingImageSrc,
   research: researchBuildingImageSrc,
@@ -132,7 +142,7 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     width: 575,
     height: 970,
     scale: 1.78,
-    groundOffset: 0.13,
+    groundOffset: 0.28,
   },
   research: {
     sourceWidth: 601,
@@ -142,7 +152,7 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     width: 550,
     height: 897,
     scale: 1.82,
-    groundOffset: 0,
+    groundOffset: 0.14,
   },
   purifier: {
     sourceWidth: 601,
@@ -152,7 +162,7 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     width: 501,
     height: 819,
     scale: 1.86,
-    groundOffset: 0,
+    groundOffset: 0.18,
   },
   harmonizer: {
     sourceWidth: 601,
@@ -162,7 +172,7 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     width: 557,
     height: 907,
     scale: 1.78,
-    groundOffset: 0,
+    groundOffset: 0.15,
   },
 }
 
@@ -232,13 +242,22 @@ function screenToWorldY(screenY: number, camera: CameraState, metrics: SceneMetr
   return (screenY - metrics.height * 0.5) / (metrics.scale * camera.zoom) + camera.y
 }
 
-function clampCameraX(targetX: number, zoom: number, metrics: SceneMetrics): number {
+function getCameraBounds(
+  zoom: number,
+  metrics: SceneMetrics,
+): { minX: number; maxX: number } {
   const halfVisible = metrics.width / (metrics.scale * zoom) / 2
   const minX = WORLD_PADDING - 0.2 + halfVisible
   const maxX = WORLD_WIDTH - WORLD_PADDING + 0.2 - halfVisible
   if (minX > maxX) {
-    return WORLD_WIDTH * 0.5
+    const center = WORLD_WIDTH * 0.5
+    return { minX: center, maxX: center }
   }
+  return { minX, maxX }
+}
+
+function clampCameraX(targetX: number, zoom: number, metrics: SceneMetrics): number {
+  const { minX, maxX } = getCameraBounds(zoom, metrics)
   return clamp(targetX, minX, maxX)
 }
 
@@ -547,6 +566,7 @@ export function ExtractionCanvas({
   const panTargetRef = useRef<number>(EXTRACTION_WORLD_X)
   const orbImageRef = useRef<HTMLImageElement | null>(null)
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
+  const groundImageRef = useRef<HTMLImageElement | null>(null)
   const groundBuildingImageRefs = useRef<Partial<Record<string, HTMLImageElement>>>({})
   const dragRef = useRef<DragState>({
     active: false,
@@ -618,7 +638,7 @@ export function ExtractionCanvas({
           index,
           placement: building.placement,
           worldX,
-          worldY: GROUND_WORLD_Y,
+          worldY: GROUND_WORLD_Y + GROUND_BUILDING_WORLD_Y_OFFSET,
           orbitRadius: 0,
           orbitAngle: 0,
           width: 0.235 + (groundIndex % 2) * 0.036,
@@ -652,6 +672,7 @@ export function ExtractionCanvas({
       })),
     [],
   )
+  const groundBuildingSpriteSources = Object.values(GROUND_BUILDING_SPRITE_ASSETS).join('|')
 
   useEffect(() => {
     const image = new Image()
@@ -662,7 +683,7 @@ export function ExtractionCanvas({
         orbImageRef.current = null
       }
     }
-  }, [])
+  }, [orbCoreImageSrc])
 
   useEffect(() => {
     const image = new Image()
@@ -673,7 +694,18 @@ export function ExtractionCanvas({
         backgroundImageRef.current = null
       }
     }
-  }, [])
+  }, [backgroundImageSrc])
+
+  useEffect(() => {
+    const image = new Image()
+    image.src = groundImageSrc
+    groundImageRef.current = image
+    return () => {
+      if (groundImageRef.current === image) {
+        groundImageRef.current = null
+      }
+    }
+  }, [groundImageSrc])
 
   useEffect(() => {
     const loadedImages: Partial<Record<string, HTMLImageElement>> = {}
@@ -690,7 +722,7 @@ export function ExtractionCanvas({
         groundBuildingImageRefs.current = {}
       }
     }
-  }, [])
+  }, [groundBuildingSpriteSources])
 
   useEffect(() => {
     latest.current = {
@@ -794,6 +826,16 @@ export function ExtractionCanvas({
       const camera = cameraRef.current
       const tint = clamp(props.restorationPercent / 100, 0, 1)
       const baseHue = 188 + tint * 106
+      const groundY = worldToScreenY(GROUND_WORLD_Y, camera, metrics)
+      const worldCenterX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
+      const { minX: cameraMinX, maxX: cameraMaxX } = getCameraBounds(camera.zoom, metrics)
+      const maxScenePanPx =
+        Math.max(
+          Math.abs(EXTRACTION_WORLD_X - cameraMinX),
+          Math.abs(EXTRACTION_WORLD_X - cameraMaxX),
+        ) *
+        metrics.scale *
+        camera.zoom
 
       ctx.save()
       ctx.clearRect(0, 0, metrics.width, metrics.height)
@@ -810,13 +852,18 @@ export function ExtractionCanvas({
           metrics.width / backgroundImage.naturalWidth,
           metrics.height / backgroundImage.naturalHeight,
         )
-        const scale = coverScale * BACKGROUND_ZOOM_OUT
-        const drawW = backgroundImage.naturalWidth * scale
-        const drawH = backgroundImage.naturalHeight * scale
+        const baseScale = coverScale * BACKGROUND_ZOOM_OUT
+        const baseDrawW = backgroundImage.naturalWidth * baseScale
+        const minDrawW = metrics.width + maxScenePanPx * 2 + 2
+        const drawW = Math.max(baseDrawW, minDrawW)
+        const drawH = (backgroundImage.naturalHeight / backgroundImage.naturalWidth) * drawW
         ctx.fillStyle = '#0f1628'
         ctx.fillRect(0, 0, metrics.width, metrics.height)
-        const drawX = (metrics.width - drawW) * 0.5
-        const drawY = metrics.height - drawH
+        const drawX = worldCenterX - drawW * 0.5
+        const drawY =
+          groundY -
+          drawH * BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO +
+          BACKGROUND_GROUND_OVERLAP_PX
         ctx.drawImage(backgroundImage, drawX, drawY, drawW, drawH)
       } else {
         drawGreyCity(ctx, metrics, camera, tint)
@@ -835,6 +882,42 @@ export function ExtractionCanvas({
           )
           ctx.fill()
         }
+      }
+
+      const groundImage = groundImageRef.current
+      const hasGroundImage =
+        !!groundImage &&
+        groundImage.complete &&
+        groundImage.naturalWidth > 0 &&
+        groundImage.naturalHeight > 0
+
+      if (hasGroundImage && groundImage) {
+        // Keep a subtle dark base so transparent areas in the ground image blend cleanly.
+        ctx.fillStyle = 'rgba(17, 21, 31, 0.97)'
+        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
+
+        const drawW = Math.max(
+          metrics.width,
+          (metrics.width + maxScenePanPx * 2) * GROUND_IMAGE_SCALE,
+        )
+        const drawH = (groundImage.naturalHeight / groundImage.naturalWidth) * drawW
+        const drawX = worldCenterX - drawW * 0.5
+        const visibleTopOffset = drawH * GROUND_IMAGE_TOP_TRIM_RATIO
+        const drawY = groundY - visibleTopOffset + metrics.scale * GROUND_IMAGE_Y_OFFSET
+        ctx.drawImage(groundImage, drawX, drawY, drawW, drawH)
+      } else {
+        const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
+        ground.addColorStop(0, 'rgba(36, 41, 54, 0.92)')
+        ground.addColorStop(1, 'rgba(17, 21, 31, 0.97)')
+        ctx.fillStyle = ground
+        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
+
+        ctx.strokeStyle = 'rgba(176, 190, 210, 0.34)'
+        ctx.lineWidth = Math.max(1, metrics.scale * 0.002)
+        ctx.beginPath()
+        ctx.moveTo(0, groundY)
+        ctx.lineTo(metrics.width, groundY)
+        ctx.stroke()
       }
 
       const zoneX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
@@ -914,20 +997,6 @@ export function ExtractionCanvas({
         ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
         ctx.fill()
       }
-
-      const groundY = worldToScreenY(GROUND_WORLD_Y, camera, metrics)
-      const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
-      ground.addColorStop(0, 'rgba(36, 41, 54, 0.92)')
-      ground.addColorStop(1, 'rgba(17, 21, 31, 0.97)')
-      ctx.fillStyle = ground
-      ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
-
-      ctx.strokeStyle = 'rgba(176, 190, 210, 0.34)'
-      ctx.lineWidth = Math.max(1, metrics.scale * 0.002)
-      ctx.beginPath()
-      ctx.moveTo(0, groundY)
-      ctx.lineTo(metrics.width, groundY)
-      ctx.stroke()
 
       const buildingBoxes: Array<{ building: BuildingLayout; rect: { x: number; y: number; width: number; height: number } }> = []
       for (let i = 0; i < buildings.length; i += 1) {
