@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, type PointerEventHandler } from 'react'
 import { BUILDINGS, MAX_BEACONS, MAX_PARTICLES, MAX_VISIBLE_OPERATORS } from '../config'
 import type { OperatorAgent, SquadBeacon, WorkforceState } from '../types'
 import orbCoreImageSrc from '../../assets/vfx/Orb_1.png'
+import orbSpriteSheetSrc from '../../assets/vfx/chroma_orb_sprite_sheet.png'
 import backgroundImageSrc from '../../assets/vfx/Background.png'
 import groundImageSrc from '../../assets/vfx/Ground.png'
-import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control.png'
-import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab.png'
-import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier.png'
-import harmonizerBuildingImageSrc from '../../assets/vfx/Building_Spectrum_Harmonizer.png'
+import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control_1.png'
+import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab_1.png'
+import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier_Pixel.png'
+import harmonizerBuildingImageSrc from '../../assets/vfx/Building_Spectrum_Harmonizer_Pixel.png'
 
 interface CanvasProps {
   restorationPercent: number
@@ -105,6 +106,13 @@ interface GroundBuildingSpriteConfig {
   groundOffset: number
 }
 
+interface SpriteSheetLayout {
+  columns: number
+  rows: number
+  frameWidth: number
+  frameHeight: number
+}
+
 const WORLD_PADDING = 0.42
 const BUILDING_SPACING = 0.82
 const GROUND_BUILDING_ORB_CLEARANCE = 0.64
@@ -117,7 +125,7 @@ const EXTRACTION_WORLD_X = WORLD_WIDTH * 0.5
 const GROUND_WORLD_Y = 0.96
 const GROUND_BUILDING_WORLD_Y_OFFSET = 0.13
 const EXTRACTION_ZONE_RADIUS = 0.26
-const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS + 0.2
+const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS - 0.4
 const BACKGROUND_ZOOM_OUT = 0.86
 // Background.png visible content reaches y=443 in a 559px frame.
 const BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO = 443 / 559
@@ -127,6 +135,18 @@ const GROUND_IMAGE_SCALE = 1
 // This ratio aligns the first visible ground pixel to `groundY`.
 const GROUND_IMAGE_TOP_TRIM_RATIO = 115 / 559
 const GROUND_IMAGE_Y_OFFSET = 0
+const ORB_SPRITE_TOTAL_FRAMES = 24
+const ORB_SPRITE_FPS = 12
+const GROUND_BUILDING_X_OFFSETS: Record<string, number> = {
+  mission: 0.218,
+  research: -0.327,
+  purifier: 0.12,
+  harmonizer: -0.18,
+  laser: 0,
+  drill: 0,
+  siphon: 0,
+  anchor: 0,
+}
 const GROUND_BUILDING_SPRITE_ASSETS: Record<string, string> = {
   mission: missionBuildingImageSrc,
   research: researchBuildingImageSrc,
@@ -141,7 +161,7 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     y: 54,
     width: 575,
     height: 970,
-    scale: 1.78,
+    scale: 3,
     groundOffset: 0.28,
   },
   research: {
@@ -151,8 +171,8 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     y: 55,
     width: 550,
     height: 897,
-    scale: 1.82,
-    groundOffset: 0.14,
+    scale: 2,
+    groundOffset: 0.02,
   },
   purifier: {
     sourceWidth: 601,
@@ -161,8 +181,8 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     y: 112,
     width: 501,
     height: 819,
-    scale: 1.86,
-    groundOffset: 0.18,
+    scale: 3,
+    groundOffset: 0.5,
   },
   harmonizer: {
     sourceWidth: 601,
@@ -171,8 +191,8 @@ const GROUND_BUILDING_SPRITE_CONFIG: Record<string, GroundBuildingSpriteConfig> 
     y: 56,
     width: 557,
     height: 907,
-    scale: 1.78,
-    groundOffset: 0.15,
+    scale: 3.5,
+    groundOffset: 0.19,
   },
 }
 
@@ -219,6 +239,44 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 
 function mixChannel(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t)
+}
+
+function resolveSpriteSheetLayout(
+  imageWidth: number,
+  imageHeight: number,
+  frameCount: number,
+): SpriteSheetLayout {
+  let bestColumns = frameCount
+  let bestRows = 1
+  let bestScore = Number.POSITIVE_INFINITY
+
+  for (let columns = 1; columns <= frameCount; columns += 1) {
+    if (frameCount % columns !== 0) continue
+    const rows = frameCount / columns
+    const frameWidth = imageWidth / columns
+    const frameHeight = imageHeight / rows
+    if (frameWidth < 1 || frameHeight < 1) {
+      continue
+    }
+
+    const aspectPenalty = Math.abs(frameWidth - frameHeight) / Math.max(frameWidth, frameHeight)
+    const integerPenalty =
+      Math.abs(frameWidth - Math.round(frameWidth)) + Math.abs(frameHeight - Math.round(frameHeight))
+    const score = aspectPenalty + integerPenalty * 0.05
+
+    if (score < bestScore) {
+      bestScore = score
+      bestColumns = columns
+      bestRows = rows
+    }
+  }
+
+  return {
+    columns: bestColumns,
+    rows: bestRows,
+    frameWidth: imageWidth / bestColumns,
+    frameHeight: imageHeight / bestRows,
+  }
 }
 
 function seeded(index: number, salt: number): number {
@@ -332,7 +390,6 @@ function drawBuilding(
   camera: CameraState,
   metrics: SceneMetrics,
   colored: boolean,
-  focused: boolean,
   tint: number,
   buildingSprites: Partial<Record<string, HTMLImageElement>>,
 ): { x: number; y: number; width: number; height: number } {
@@ -357,7 +414,7 @@ function drawBuilding(
       ? `rgba(${mixChannel(106, rgb.r, colorMix)}, ${mixChannel(112, rgb.g, colorMix)}, ${mixChannel(126, rgb.b, colorMix)}, 0.94)`
       : 'rgba(115, 123, 140, 0.62)'
     ctx.fillStyle = body
-    ctx.strokeStyle = focused ? 'rgba(255, 252, 236, 0.85)' : 'rgba(220, 232, 255, 0.28)'
+    ctx.strokeStyle = 'rgba(220, 232, 255, 0.28)'
     ctx.lineWidth = Math.max(1, metrics.scale * 0.0026 * camera.zoom)
     ctx.beginPath()
     ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
@@ -502,14 +559,6 @@ function drawBuilding(
     drawLockGlyph(ctx, x, top + height * 0.2, width * 0.16, false)
   }
 
-  if (hasBuildingSprite && focused) {
-    ctx.strokeStyle = 'rgba(255, 252, 236, 0.85)'
-    ctx.lineWidth = Math.max(1, metrics.scale * 0.0024 * camera.zoom)
-    ctx.beginPath()
-    ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
-    ctx.stroke()
-  }
-
   if (!hasBuildingSprite) {
     const glow = colored ? 0.28 + tint * 0.46 : 0.1
     ctx.fillStyle = colored
@@ -565,6 +614,7 @@ export function ExtractionCanvas({
   const cameraRef = useRef<CameraState>({ x: EXTRACTION_WORLD_X, y: 0.52, zoom: 1 })
   const panTargetRef = useRef<number>(EXTRACTION_WORLD_X)
   const orbImageRef = useRef<HTMLImageElement | null>(null)
+  const orbSpriteLayoutRef = useRef<SpriteSheetLayout | null>(null)
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
   const groundImageRef = useRef<HTMLImageElement | null>(null)
   const groundBuildingImageRefs = useRef<Partial<Record<string, HTMLImageElement>>>({})
@@ -633,6 +683,7 @@ export function ExtractionCanvas({
           const direction = worldX <= EXTRACTION_WORLD_X ? -1 : 1
           worldX = EXTRACTION_WORLD_X + direction * GROUND_BUILDING_ORB_CLEARANCE
         }
+        worldX += GROUND_BUILDING_X_OFFSETS[building.id] ?? 0
         layouts.push({
           id: building.id,
           index,
@@ -675,15 +726,32 @@ export function ExtractionCanvas({
   const groundBuildingSpriteSources = Object.values(GROUND_BUILDING_SPRITE_ASSETS).join('|')
 
   useEffect(() => {
-    const image = new Image()
-    image.src = orbCoreImageSrc
-    orbImageRef.current = image
+    const spriteSheet = new Image()
+    let fallbackImage: HTMLImageElement | null = null
+
+    spriteSheet.onload = () => {
+      orbSpriteLayoutRef.current = resolveSpriteSheetLayout(
+        spriteSheet.naturalWidth,
+        spriteSheet.naturalHeight,
+        ORB_SPRITE_TOTAL_FRAMES,
+      )
+    }
+    spriteSheet.onerror = () => {
+      fallbackImage = new Image()
+      fallbackImage.src = orbCoreImageSrc
+      orbImageRef.current = fallbackImage
+      orbSpriteLayoutRef.current = null
+    }
+    spriteSheet.src = orbSpriteSheetSrc
+    orbImageRef.current = spriteSheet
+
     return () => {
-      if (orbImageRef.current === image) {
+      if (orbImageRef.current === spriteSheet || orbImageRef.current === fallbackImage) {
         orbImageRef.current = null
       }
+      orbSpriteLayoutRef.current = null
     }
-  }, [orbCoreImageSrc])
+  }, [orbCoreImageSrc, orbSpriteSheetSrc])
 
   useEffect(() => {
     const image = new Image()
@@ -812,8 +880,8 @@ export function ExtractionCanvas({
         : 1
       const targetY = selectedBuilding
         ? selectedBuilding.placement === 'orbital'
-          ? EXTRACTION_WORLD_Y - 0.06
-          : GROUND_WORLD_Y - 0.12
+          ? EXTRACTION_WORLD_Y
+          : GROUND_WORLD_Y - 0.02
         : 0.52
       const unclampedTargetX = selectedBuilding ? selectedBuilding.worldX : panTargetRef.current
       const targetX = clampCameraX(unclampedTargetX, targetZoom, metrics)
@@ -941,27 +1009,55 @@ export function ExtractionCanvas({
 
       const innerRadius = zoneRadiusPx
       const orbImage = orbImageRef.current
+      const orbSpriteLayout = orbSpriteLayoutRef.current
       if (
         orbImage &&
         orbImage.complete &&
         orbImage.naturalWidth > 0 &&
         orbImage.naturalHeight > 0
       ) {
-        const minSide = Math.min(orbImage.naturalWidth, orbImage.naturalHeight)
+        const sourceWidth = orbSpriteLayout ? orbSpriteLayout.frameWidth : orbImage.naturalWidth
+        const sourceHeight = orbSpriteLayout ? orbSpriteLayout.frameHeight : orbImage.naturalHeight
+        const minSide = Math.min(sourceWidth, sourceHeight)
         const baseSize = innerRadius * 2
         const srcScale = baseSize / minSide
-        const drawW = orbImage.naturalWidth * srcScale
-        const drawH = orbImage.naturalHeight * srcScale
+        const drawW = sourceWidth * srcScale
+        const drawH = sourceHeight * srcScale
         const pulseScale = 1 + Math.sin(now * 0.00085) * 0.012
         const finalW = drawW * pulseScale
         const finalH = drawH * pulseScale
+        const frameIndex = (() => {
+          if (!orbSpriteLayout || ORB_SPRITE_TOTAL_FRAMES <= 1) {
+            return 0
+          }
+          const pingPongLength = ORB_SPRITE_TOTAL_FRAMES * 2 - 2
+          const tick = Math.floor(now * 0.001 * ORB_SPRITE_FPS)
+          const loopIndex = tick % pingPongLength
+          return loopIndex < ORB_SPRITE_TOTAL_FRAMES
+            ? loopIndex
+            : pingPongLength - loopIndex
+        })()
+        const frameColumn = orbSpriteLayout ? frameIndex % orbSpriteLayout.columns : 0
+        const frameRow = orbSpriteLayout ? Math.floor(frameIndex / orbSpriteLayout.columns) : 0
+        const sourceX = orbSpriteLayout ? frameColumn * orbSpriteLayout.frameWidth : 0
+        const sourceY = orbSpriteLayout ? frameRow * orbSpriteLayout.frameHeight : 0
 
         ctx.save()
         ctx.beginPath()
         ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
         ctx.clip()
         ctx.globalAlpha = 0.9 + tint * 0.1
-        ctx.drawImage(orbImage, zoneX - finalW / 2, zoneY - finalH / 2, finalW, finalH)
+        ctx.drawImage(
+          orbImage,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          zoneX - finalW / 2,
+          zoneY - finalH / 2,
+          finalW,
+          finalH,
+        )
         ctx.restore()
 
         const gloss = ctx.createRadialGradient(
@@ -1002,14 +1098,12 @@ export function ExtractionCanvas({
       for (let i = 0; i < buildings.length; i += 1) {
         const building = buildings[i]
         const colored = i < props.unlockedBuildings
-        const focused = props.selectedBuildingId === building.id
         const rect = drawBuilding(
           ctx,
           building,
           camera,
           metrics,
           colored,
-          focused,
           tint,
           groundBuildingImageRefs.current,
         )
