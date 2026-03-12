@@ -1,121 +1,99 @@
 import { describe, expect, it } from 'vitest'
-import { RESTORATION_TARGET_POINTS, UPGRADE_LANES } from './config'
+import { RESTORATION_TARGET_POINTS } from './config'
 import {
-  calculateAutoGainPerSec,
-  calculateBuildingUnlockChromaReward,
-  calculateDiffusionMultiplier,
-  calculateEngagementMultiplier,
-  calculateEconomySnapshot,
-  calculatePrestigeLaunchChroma,
-  calculatePrestigeMultiplier,
-  calculatePrestigeReward,
-  calculateRestorationPercent,
-  calculateUpgradeShardRequirement,
-  calculateTapGain,
+  calculateEstimatedSecondsToPrestige,
+  calculateEffectiveUpgradeScalar,
+  calculateExchangeFeeRate,
+  calculateLaneUpgradeColorCost,
+  calculateMissingColorCost,
+  calculateSwapQuote,
+  canAffordColorCost,
+  createDefaultMetaTree,
+  createEmptyInventory,
 } from './economy'
 
 describe('economy calculations', () => {
-  it('scales tap and auto gains from upgrades and prestige multiplier', () => {
-    const tapGain = calculateTapGain(4, 2.2)
-    const auto = calculateAutoGainPerSec(25, 4, 2.2)
-
-    expect(tapGain).toBeGreaterThan(1)
-    expect(auto).toBeGreaterThan(tapGain)
-  })
-
-  it('derives restoration gain from diffusion multiplier', () => {
-    const snapshot = calculateEconomySnapshot({
-      extractionTier: 3,
-      diffusionTier: 4,
-      logicalOperators: 18,
-      prestigeMultiplier: 1.8,
+  it('derives stage A mixed-color upgrade costs', () => {
+    const cost = calculateLaneUpgradeColorCost({
+      lane: 'extraction',
+      nextTier: 10,
+      scalarCost: 100,
+      prestigeCount: 0,
     })
 
-    expect(snapshot.restorationGainPerSec).toBeCloseTo(
-      snapshot.autoGainPerSec * calculateDiffusionMultiplier(4),
-      5,
-    )
+    expect(cost.red).toBe(70)
+    expect(cost.orange).toBe(30)
   })
 
-  it('clamps restoration to 100 percent', () => {
-    expect(calculateRestorationPercent(999999)).toBe(100)
-  })
-
-  it('applies momentum and surge bonuses to active economy rates', () => {
-    const engagementMultiplier = calculateEngagementMultiplier(0.6, 12)
-    const boosted = calculateEconomySnapshot({
-      extractionTier: 3,
-      diffusionTier: 2,
-      logicalOperators: 16,
-      prestigeMultiplier: 1.4,
-      engagementMultiplier,
-    })
-    const baseline = calculateEconomySnapshot({
-      extractionTier: 3,
-      diffusionTier: 2,
-      logicalOperators: 16,
-      prestigeMultiplier: 1.4,
+  it('derives stage B mixed-color costs with neon requirements', () => {
+    const cost = calculateLaneUpgradeColorCost({
+      lane: 'automation',
+      nextTier: 22,
+      scalarCost: 100,
+      prestigeCount: 1,
     })
 
-    expect(boosted.engagementMultiplier).toBeGreaterThan(1)
-    expect(boosted.tapGain).toBeGreaterThan(baseline.tapGain)
-    expect(boosted.autoGainPerSec).toBeGreaterThan(baseline.autoGainPerSec)
+    expect(cost.blue).toBe(55)
+    expect(cost.violet).toBe(25)
+    expect(cost.neon_blue).toBe(20)
   })
 
-  it('awards larger chroma drops for later building unlocks', () => {
-    expect(calculateBuildingUnlockChromaReward(1)).toBe(0)
-    expect(calculateBuildingUnlockChromaReward(2)).toBeGreaterThan(0)
-    expect(calculateBuildingUnlockChromaReward(6)).toBeGreaterThan(
-      calculateBuildingUnlockChromaReward(3),
-    )
+  it('derives stage C mixed-color costs with cross-lane pressure', () => {
+    const cost = calculateLaneUpgradeColorCost({
+      lane: 'diffusion',
+      nextTier: 34,
+      scalarCost: 100,
+      prestigeCount: 3,
+    })
+
+    expect(cost.yellow).toBe(55)
+    expect(cost.neon_yellow).toBe(25)
+    expect(cost.red).toBe(20)
   })
 
-  it('guarantees stronger early prestige rewards for first loops', () => {
-    expect(calculatePrestigeReward(RESTORATION_TARGET_POINTS, 0)).toBeGreaterThanOrEqual(5)
-    expect(calculatePrestigeReward(RESTORATION_TARGET_POINTS, 6)).toBeGreaterThanOrEqual(4)
-    expect(calculatePrestigeReward(RESTORATION_TARGET_POINTS, 12)).toBeGreaterThanOrEqual(3)
+  it('applies the fixed swap formula with fee', () => {
+    const quote = calculateSwapQuote({
+      from: 'red',
+      to: 'blue',
+      inputAmount: 100,
+      feeRate: 0.15,
+    })
+
+    expect(quote.outputAmount).toBe(77)
   })
 
-  it('rewards overcap pushes above 100 percent recovery', () => {
-    const at100 = calculatePrestigeReward(RESTORATION_TARGET_POINTS, 20)
-    const at150 = calculatePrestigeReward(RESTORATION_TARGET_POINTS * 1.5, 20)
-    expect(at150).toBeGreaterThan(at100)
+  it('reduces exchange fee with meta rank', () => {
+    const meta = createDefaultMetaTree()
+    meta.exchange_protocols = 2
+    expect(calculateExchangeFeeRate(meta)).toBeCloseTo(0.11, 8)
   })
 
-  it('applies diminishing returns to very large shard totals', () => {
-    const at24 = calculatePrestigeMultiplier(24)
-    const at72 = calculatePrestigeMultiplier(72)
-    const at120 = calculatePrestigeMultiplier(120)
-    const earlyGainPerShard = (at24 - 1) / 24
-    const lateGainPerShard = (at120 - at72) / 48
+  it('derives prestige ETA from current restoration scaling', () => {
+    const etaA = calculateEstimatedSecondsToPrestige(10_000, 40)
+    const etaB = calculateEstimatedSecondsToPrestige(10_000, 80)
+    const etaComplete = calculateEstimatedSecondsToPrestige(RESTORATION_TARGET_POINTS + 1, 10)
 
-    expect(lateGainPerShard).toBeLessThan(earlyGainPerShard)
+    expect(etaA).not.toBeNull()
+    expect(etaB).not.toBeNull()
+    expect((etaB ?? 0)).toBeLessThan(etaA ?? 0)
+    expect(etaComplete).toBe(0)
   })
 
-  it('scales launch chroma from prestige outcome', () => {
-    expect(calculatePrestigeLaunchChroma(5, 5)).toBeGreaterThan(0)
-    expect(calculatePrestigeLaunchChroma(8, 20)).toBeGreaterThan(
-      calculatePrestigeLaunchChroma(3, 8),
-    )
+  it('applies extraction efficiency discount to scalar upgrade costs', () => {
+    const meta = createDefaultMetaTree()
+    meta.extract_efficiency = 2
+    const discounted = calculateEffectiveUpgradeScalar('extraction', 3, meta)
+    const baseline = calculateEffectiveUpgradeScalar('extraction', 3, createDefaultMetaTree())
+    expect(discounted).toBeLessThan(baseline)
   })
 
-  it('enforces shard gates on high upgrade tiers', () => {
-    const extractionLane = UPGRADE_LANES.find((lane) => lane.id === 'extraction')
-    const diffusionLane = UPGRADE_LANES.find((lane) => lane.id === 'diffusion')
-    if (!extractionLane || !diffusionLane) {
-      throw new Error('Expected extraction and diffusion lanes to exist')
-    }
-    const firstExtractionGateTier = extractionLane.prestigeGates[0].tier
-    const firstDiffusionGateTier = diffusionLane.prestigeGates[0].tier
-    const finalDiffusionGateTier =
-      diffusionLane.prestigeGates[diffusionLane.prestigeGates.length - 1].tier
+  it('detects affordability and color-specific blockers', () => {
+    const inventory = createEmptyInventory()
+    inventory.red = 50
+    inventory.orange = 12
+    const cost = { red: 40, orange: 16 }
 
-    expect(calculateUpgradeShardRequirement('extraction', firstExtractionGateTier - 1)).toBe(0)
-    expect(calculateUpgradeShardRequirement('extraction', firstExtractionGateTier)).toBeGreaterThan(
-      0,
-    )
-    expect(calculateUpgradeShardRequirement('diffusion', finalDiffusionGateTier)).toBeGreaterThan(
-      calculateUpgradeShardRequirement('diffusion', firstDiffusionGateTier),
-    )
+    expect(canAffordColorCost(inventory, cost)).toBe(false)
+    expect(calculateMissingColorCost(inventory, cost)).toEqual({ orange: 4 })
   })
 })

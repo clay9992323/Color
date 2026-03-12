@@ -1,31 +1,6 @@
 export type UpgradeLaneId = 'extraction' | 'automation' | 'diffusion'
 
-export type OperatorState = 'approach' | 'siphon' | 'return' | 'recover'
-
-export interface Vec2 {
-  x: number
-  y: number
-}
-
-export type BuildingPlacement = 'ground' | 'orbital'
-
-export interface BuildingDefinition {
-  id: string
-  name: string
-  unlockAtTotalTiers: number
-  unlockAtPrismShards: number
-  placement: BuildingPlacement
-  color: string
-}
-
-export interface BuildingUpgradeOption {
-  id: string
-  name: string
-  description: string
-  lane: UpgradeLaneId
-}
-
-export interface UpgradePrestigeGate {
+export interface UpgradeGate {
   tier: number
   minShards: number
 }
@@ -37,7 +12,132 @@ export interface UpgradeLaneDefinition {
   baseCost: number
   growth: number
   maxTier: number
-  prestigeGates: UpgradePrestigeGate[]
+  prestigeGates: UpgradeGate[]
+}
+
+export interface BuildingDefinition {
+  id: string
+  name: string
+  unlockAtTotalTiers: number
+  unlockAtPrismShards: number
+  placement: 'ground' | 'orbital'
+  color: string
+}
+
+export interface BuildingUpgradeOption {
+  id: string
+  name: string
+  description: string
+  lane: UpgradeLaneId
+}
+
+export type BaseColorId = 'red' | 'blue' | 'yellow'
+export type CraftedColorId = 'green' | 'orange' | 'violet'
+export type NormalColorId = BaseColorId | CraftedColorId
+export type NeonColorId =
+  | 'neon_red'
+  | 'neon_blue'
+  | 'neon_yellow'
+  | 'neon_green'
+  | 'neon_orange'
+  | 'neon_violet'
+
+export type ColorId = NormalColorId | NeonColorId
+export type CurrencyId = ColorId | 'prism_shard'
+export type ColorInventory = Record<ColorId, number>
+export type ColorCost = Partial<Record<ColorId, number>>
+
+export interface RecipeDefinition {
+  id: string
+  name: string
+  output: CraftedColorId
+  outputAmount: number
+  unitDurationSeconds: number
+  inputs: Partial<Record<NormalColorId, number>>
+}
+
+export interface RecipeQueueItem {
+  id: string
+  recipeId: string
+  remainingUnits: number
+  totalUnits: number
+  progressSeconds: number
+}
+
+export interface RefineryQueueItem {
+  id: string
+  colorId: NormalColorId
+  neonColorId: NeonColorId
+  remainingBatches: number
+  totalBatches: number
+  progressSeconds: number
+  inputPerBatch: number
+  outputPerBatch: number
+  unitDurationSeconds: number
+}
+
+export interface RefineryState {
+  unlocked: boolean
+  inputPerBatch: number
+  outputPerBatch: number
+  unitDurationSeconds: number
+}
+
+export interface ExchangeQuote {
+  from: ColorId
+  to: ColorId
+  inputAmount: number
+  outputAmount: number
+  feeRate: number
+  valueIn: number
+  valueOut: number
+}
+
+export type PrestigeReadiness = 'calm' | 'charged' | 'critical' | 'ready'
+
+export type MetaNodeId =
+  | 'tap_mastery'
+  | 'extract_efficiency'
+  | 'operator_protocols'
+  | 'exchange_protocols'
+  | 'restore_flux'
+  | 'refinery_mastery'
+
+export interface MetaTreeNode {
+  id: MetaNodeId
+  branch: UpgradeLaneId
+  name: string
+  description: string
+  maxRank: number
+  costs: number[]
+}
+
+export type MetaTreeState = Record<MetaNodeId, number>
+
+export interface EconomySnapshot {
+  tapGain: number
+  autoGainPerSec: number
+  restorationGainPerSec: number
+  engagementMultiplier: number
+  prestigeMultiplier: number
+}
+
+export interface OfflineGainResult {
+  elapsedSeconds: number
+  cappedSeconds: number
+  restorationAwarded: number
+  extractionSecondsAwarded: number
+  inventoryAwarded: ColorInventory
+}
+
+export interface PrestigeResult {
+  earnedShards: number
+  newTotalShards: number
+  launchMomentum: number
+  launchSurgeSeconds: number
+  newMultiplier: number
+  newPrestigeCount: number
+  campaignComplete: boolean
 }
 
 export interface WorkforceState {
@@ -47,6 +147,13 @@ export interface WorkforceState {
   overflowOperators: number
   squads: number
 }
+
+export interface Vec2 {
+  x: number
+  y: number
+}
+
+export type OperatorState = 'approach' | 'siphon' | 'return' | 'recover'
 
 export interface OperatorAgent {
   id: number
@@ -68,28 +175,41 @@ export interface SquadBeacon {
   pulsePhase: number
 }
 
-export interface EconomySnapshot {
-  tapGain: number
-  autoGainPerSec: number
-  restorationGainPerSec: number
-  engagementMultiplier: number
+export interface MilestoneFlags {
+  blueUnlocked: boolean
+  yellowUnlocked: boolean
+  neonUnlocked: boolean
+}
+
+export interface GameState {
+  inventory: ColorInventory
+  restorationPoints: number
+  restorationPercent: number
+  momentum: number
+  unlockSurgeSeconds: number
+  prismShards: number
+  unspentShards: number
   prestigeMultiplier: number
-}
-
-export interface OfflineGainResult {
-  elapsedSeconds: number
-  cappedSeconds: number
-  chromaAwarded: number
-  restorationAwarded: number
-}
-
-export interface PrestigeResult {
-  earnedShards: number
-  newTotalShards: number
-  launchChroma: number
-  launchMomentum: number
-  launchSurgeSeconds: number
-  newMultiplier: number
+  upgrades: Record<UpgradeLaneId, number>
+  totalUpgradesPurchased: number
+  unlockedBuildings: number
+  workforce: WorkforceState
+  agents: OperatorAgent[]
+  beacons: SquadBeacon[]
+  economy: EconomySnapshot
+  lastTickAt: number
+  lastActiveAt: number
+  lifetimeRestorationPoints: number
+  offlineGainResult: OfflineGainResult | null
+  recipeQueue: RecipeQueueItem[]
+  refineryQueue: RefineryQueueItem[]
+  runExtractionSeconds: number
+  prestigeCount: number
+  prestigeReadiness: PrestigeReadiness
+  worldVisualTier: number
+  metaTree: MetaTreeState
+  campaignComplete: boolean
+  milestoneFlags: MilestoneFlags
 }
 
 export interface SaveDataV1 {
@@ -103,23 +223,20 @@ export interface SaveDataV1 {
   lastActiveAt: number
 }
 
-export interface GameState {
-  chroma: number
+export interface SaveDataV2 {
+  version: 2
+  inventory: ColorInventory
   restorationPoints: number
-  restorationPercent: number
-  momentum: number
-  unlockSurgeSeconds: number
   prismShards: number
-  prestigeMultiplier: number
+  unspentShards: number
   upgrades: Record<UpgradeLaneId, number>
   totalUpgradesPurchased: number
-  unlockedBuildings: number
-  workforce: WorkforceState
-  agents: OperatorAgent[]
-  beacons: SquadBeacon[]
-  economy: EconomySnapshot
-  lastTickAt: number
-  lastActiveAt: number
   lifetimeRestorationPoints: number
-  offlineGainResult: OfflineGainResult | null
+  lastActiveAt: number
+  runExtractionSeconds: number
+  prestigeCount: number
+  worldVisualTier: number
+  metaTree: MetaTreeState
+  campaignComplete: boolean
+  milestoneFlags: MilestoneFlags
 }

@@ -2,15 +2,16 @@ export function formatCompact(value: number): string {
   if (!Number.isFinite(value)) {
     return '0'
   }
+  const normalized = Math.max(0, Math.floor(value))
   return Intl.NumberFormat('en-US', {
     notation: 'compact',
     compactDisplay: 'short',
-    maximumFractionDigits: value >= 100 ? 0 : 1,
-  }).format(Math.max(0, value))
+    maximumFractionDigits: 0,
+  }).format(normalized)
 }
 
 export function formatPercent(value: number): string {
-  return `${value.toFixed(1)}%`
+  return `${Math.round(value)}%`
 }
 
 export function formatSeconds(value: number): string {
@@ -21,4 +22,3 @@ export function formatSeconds(value: number): string {
   const seconds = Math.floor(value % 60)
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
 }
-

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, type PointerEventHandler } from 'react'
+import { useEffect, useMemo, useRef, type PointerEventHandler, type WheelEventHandler } from 'react'
 import { BUILDINGS, MAX_BEACONS, MAX_PARTICLES, MAX_VISIBLE_OPERATORS } from '../config'
-import type { OperatorAgent, SquadBeacon, WorkforceState } from '../types'
-import orbCoreImageSrc from '../../assets/vfx/Orb_1.png'
-import orbSpriteSheetSrc from '../../assets/vfx/chroma_orb_sprite_sheet.png'
+import type { OperatorAgent, PrestigeReadiness, SquadBeacon, WorkforceState } from '../types'
 import backgroundImageSrc from '../../assets/vfx/Background.png'
-import groundImageSrc from '../../assets/vfx/Ground.png'
+import undergroundImageSrc from '../../assets/vfx/Underground.png'
+import pumpRedImageSrc from '../../assets/vfx/Pump_Red.png'
+import pumpTubeImageSrc from '../../assets/vfx/Pump_Tube.png'
 import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control_1.png'
 import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab_1.png'
 import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier_Pixel.png'
@@ -17,6 +17,10 @@ interface CanvasProps {
   agents: OperatorAgent[]
   beacons: SquadBeacon[]
   selectedBuildingId: string | null
+  prestigeReadiness: PrestigeReadiness
+  worldVisualTier: number
+  ritualPhase: 'idle' | 'charge' | 'flash' | 'wave' | 'settle'
+  inputLocked: boolean
   onExtract: () => void
   onSelectBuilding: (buildingId: string | null) => void
 }
@@ -72,6 +76,7 @@ interface DragState {
   active: boolean
   pointerId: number
   lastX: number
+  lastY: number
   moved: boolean
 }
 
@@ -85,6 +90,17 @@ interface CameraState {
   x: number
   y: number
   zoom: number
+}
+
+interface DepthBounds {
+  minY: number
+  maxY: number
+}
+
+interface BackgroundTransform {
+  drawX: number
+  drawW: number
+  seamY: number
 }
 
 interface Star {
@@ -106,16 +122,9 @@ interface GroundBuildingSpriteConfig {
   groundOffset: number
 }
 
-interface SpriteSheetLayout {
-  columns: number
-  rows: number
-  frameWidth: number
-  frameHeight: number
-}
-
 const WORLD_PADDING = 0.42
 const BUILDING_SPACING = 0.82
-const GROUND_BUILDING_ORB_CLEARANCE = 0.64
+const GROUND_BUILDING_PUMP_CLEARANCE = 0.64
 const GROUND_BUILDING_COUNT = Math.max(
   1,
   BUILDINGS.filter((building) => building.placement === 'ground').length,
@@ -124,23 +133,33 @@ const WORLD_WIDTH = WORLD_PADDING * 2 + (GROUND_BUILDING_COUNT - 1) * BUILDING_S
 const EXTRACTION_WORLD_X = WORLD_WIDTH * 0.5
 const GROUND_WORLD_Y = 0.96
 const GROUND_BUILDING_WORLD_Y_OFFSET = 0.13
-const EXTRACTION_ZONE_RADIUS = 0.26
-const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS - 0.4
+const EXTRACTION_ZONE_RADIUS = 0.2
+const PUMP_WORLD_Y_OFFSET = -0.12
+const PUMP_SPRITE_Y_OFFSET = 2.3
+const PUMP_TUBE_SCALE = 0.6
+const PUMP_TUBE_Y_OFFSET = 3.4
+const EXTRACTION_WORLD_Y = GROUND_WORLD_Y + PUMP_WORLD_Y_OFFSET
 const BACKGROUND_ZOOM_OUT = 0.86
+const UNDERGROUND_ZOOM_OUT = 0.5
+const UNDERGROUND_Y_OFFSET = -120
+const UNDERGROUND_EDGE_OVERSCAN = 0.1
+const UNDERGROUND_SOURCE_INSET_X = 48
 // Background.png visible content reaches y=443 in a 559px frame.
-const BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO = 443 / 559
+const BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO = 420 / 559
 const BACKGROUND_GROUND_OVERLAP_PX = 1
-const GROUND_IMAGE_SCALE = 1
-// Ground.png has transparent headroom before visible platform content.
-// This ratio aligns the first visible ground pixel to `groundY`.
-const GROUND_IMAGE_TOP_TRIM_RATIO = 115 / 559
-const GROUND_IMAGE_Y_OFFSET = 0
-const ORB_SPRITE_TOTAL_FRAMES = 24
-const ORB_SPRITE_FPS = 12
+const DEPTH_MIN_CAMERA_Y = 0.58
+const DEPTH_MAX_BASE_CAMERA_Y = 1.35
+const DEPTH_MAX_EXTRA_RANGE = 2.8
+const DEPTH_LAYER_MARKERS = [
+  { id: 'red', label: 'Red Seam', worldY: 1.38, unlockPercent: 0, color: '#ff6d4f' },
+  { id: 'blue', label: 'Blue Seam', worldY: 2.08, unlockPercent: 22, color: '#67ddff' },
+  { id: 'yellow', label: 'Yellow Seam', worldY: 2.76, unlockPercent: 54, color: '#ffd86f' },
+  { id: 'core', label: 'Deep Blend', worldY: 3.45, unlockPercent: 78, color: '#dcb4ff' },
+] as const
 const GROUND_BUILDING_X_OFFSETS: Record<string, number> = {
-  mission: 0.218,
-  research: -0.327,
-  purifier: 0.12,
+  mission: 0.0,
+  research: -0.1,
+  purifier: 0.0,
   harmonizer: -0.18,
   laser: 0,
   drill: 0,
@@ -241,47 +260,18 @@ function mixChannel(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * t)
 }
 
-function resolveSpriteSheetLayout(
-  imageWidth: number,
-  imageHeight: number,
-  frameCount: number,
-): SpriteSheetLayout {
-  let bestColumns = frameCount
-  let bestRows = 1
-  let bestScore = Number.POSITIVE_INFINITY
-
-  for (let columns = 1; columns <= frameCount; columns += 1) {
-    if (frameCount % columns !== 0) continue
-    const rows = frameCount / columns
-    const frameWidth = imageWidth / columns
-    const frameHeight = imageHeight / rows
-    if (frameWidth < 1 || frameHeight < 1) {
-      continue
-    }
-
-    const aspectPenalty = Math.abs(frameWidth - frameHeight) / Math.max(frameWidth, frameHeight)
-    const integerPenalty =
-      Math.abs(frameWidth - Math.round(frameWidth)) + Math.abs(frameHeight - Math.round(frameHeight))
-    const score = aspectPenalty + integerPenalty * 0.05
-
-    if (score < bestScore) {
-      bestScore = score
-      bestColumns = columns
-      bestRows = rows
-    }
-  }
-
-  return {
-    columns: bestColumns,
-    rows: bestRows,
-    frameWidth: imageWidth / bestColumns,
-    frameHeight: imageHeight / bestRows,
-  }
-}
-
 function seeded(index: number, salt: number): number {
   const value = Math.sin(index * 127.1 + salt * 311.7) * 43758.5453123
   return value - Math.floor(value)
+}
+
+function getDepthBounds(restorationPercent: number, worldVisualTier: number): DepthBounds {
+  const normalized = clamp(restorationPercent / 100, 0, 1)
+  const tierBonus = Math.min(0.65, worldVisualTier * 0.08)
+  return {
+    minY: DEPTH_MIN_CAMERA_Y,
+    maxY: DEPTH_MAX_BASE_CAMERA_Y + normalized * DEPTH_MAX_EXTRA_RANGE + tierBonus,
+  }
 }
 
 function worldToScreenX(worldX: number, camera: CameraState, metrics: SceneMetrics): number {
@@ -362,6 +352,308 @@ function drawGreyCity(
   haze.addColorStop(1, `rgba(146, 156, 174, ${0.16 + tint * 0.07})`)
   ctx.fillStyle = haze
   ctx.fillRect(0, horizonY - metrics.height * 0.24, metrics.width, metrics.height * 0.3)
+}
+
+function drawNightSkyStars(
+  ctx: CanvasRenderingContext2D,
+  metrics: SceneMetrics,
+  stars: Star[],
+  now: number,
+  skyBottomY: number,
+): void {
+  const clampedSkyBottom = clamp(skyBottomY, 0, metrics.height)
+  if (clampedSkyBottom <= 0) {
+    return
+  }
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, metrics.width, clampedSkyBottom)
+  ctx.clip()
+
+  for (let i = 0; i < stars.length; i += 1) {
+    const star = stars[i]
+    const flicker = 0.4 + Math.sin(now * 0.0011 * star.speed + star.phase) * 0.26
+    const alpha = clamp(0.14 + flicker * 0.28, 0.08, 0.42)
+    const x = star.x * metrics.width
+    const y = star.y * clampedSkyBottom
+    const radius = Math.max(0.75, star.radius * metrics.scale)
+    ctx.fillStyle = `rgba(229, 238, 255, ${alpha})`
+    ctx.beginPath()
+    ctx.arc(x, y, radius, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.restore()
+}
+
+interface PumpPalette {
+  core: string
+  coreBright: string
+  vein: string
+  steelA: string
+  steelB: string
+  accent: string
+  spark: string
+}
+
+function getPumpPalette(restorationPercent: number, worldVisualTier: number): PumpPalette {
+  const tierBoost = Math.min(0.16, worldVisualTier * 0.02)
+  if (restorationPercent < 22) {
+    return {
+      core: `rgba(255, 98, 74, ${0.78 + tierBoost})`,
+      coreBright: `rgba(255, 175, 128, ${0.8 + tierBoost})`,
+      vein: `rgba(255, 86, 62, ${0.55 + tierBoost})`,
+      steelA: 'rgba(105, 116, 132, 0.96)',
+      steelB: 'rgba(59, 70, 87, 0.96)',
+      accent: `rgba(255, 129, 90, ${0.85 + tierBoost})`,
+      spark: `rgba(255, 208, 163, ${0.9 + tierBoost})`,
+    }
+  }
+  if (restorationPercent < 54) {
+    return {
+      core: `rgba(255, 158, 66, ${0.78 + tierBoost})`,
+      coreBright: `rgba(255, 224, 124, ${0.82 + tierBoost})`,
+      vein: `rgba(255, 180, 72, ${0.58 + tierBoost})`,
+      steelA: 'rgba(108, 122, 137, 0.96)',
+      steelB: 'rgba(63, 74, 92, 0.96)',
+      accent: `rgba(255, 206, 100, ${0.86 + tierBoost})`,
+      spark: `rgba(255, 234, 161, ${0.92 + tierBoost})`,
+    }
+  }
+  if (restorationPercent < 82) {
+    return {
+      core: `rgba(72, 198, 255, ${0.8 + tierBoost})`,
+      coreBright: `rgba(142, 247, 255, ${0.83 + tierBoost})`,
+      vein: `rgba(76, 220, 255, ${0.6 + tierBoost})`,
+      steelA: 'rgba(102, 124, 143, 0.96)',
+      steelB: 'rgba(55, 71, 91, 0.96)',
+      accent: `rgba(118, 234, 255, ${0.86 + tierBoost})`,
+      spark: `rgba(195, 250, 255, ${0.92 + tierBoost})`,
+    }
+  }
+  return {
+    core: `rgba(188, 151, 255, ${0.8 + tierBoost})`,
+    coreBright: `rgba(118, 255, 222, ${0.85 + tierBoost})`,
+    vein: `rgba(205, 137, 255, ${0.62 + tierBoost})`,
+    steelA: 'rgba(110, 130, 148, 0.96)',
+    steelB: 'rgba(59, 74, 95, 0.96)',
+    accent: `rgba(250, 192, 116, ${0.88 + tierBoost})`,
+    spark: `rgba(222, 255, 230, ${0.94 + tierBoost})`,
+  }
+}
+
+function drawSubsurfaceChroma(
+  ctx: CanvasRenderingContext2D,
+  metrics: SceneMetrics,
+  groundY: number,
+  worldCenterX: number,
+  maxScenePanPx: number,
+  undergroundImage: HTMLImageElement | null,
+  backgroundTransform: BackgroundTransform | null,
+): void {
+  const hasUndergroundImage =
+    !!undergroundImage &&
+    undergroundImage.complete &&
+    undergroundImage.naturalWidth > 0 &&
+    undergroundImage.naturalHeight > 0
+
+  if (hasUndergroundImage && undergroundImage) {
+    const seamY = backgroundTransform?.seamY ?? groundY
+    const targetHeight = Math.max(1, metrics.height - seamY)
+    const baseDrawW = backgroundTransform?.drawW ?? (() => {
+      const coverScale = Math.max(
+        (metrics.width + maxScenePanPx * 2) / undergroundImage.naturalWidth,
+        targetHeight / undergroundImage.naturalHeight,
+      )
+      return undergroundImage.naturalWidth * coverScale
+    })()
+    const zoomedW = baseDrawW * UNDERGROUND_ZOOM_OUT
+    const minScrollableW =
+      metrics.width + maxScenePanPx * 2 + metrics.width * UNDERGROUND_EDGE_OVERSCAN * 2
+    const drawW = Math.max(zoomedW, minScrollableW)
+    const drawH = (undergroundImage.naturalHeight / undergroundImage.naturalWidth) * drawW
+    const drawX = worldCenterX - drawW * 0.5
+    const drawY = seamY + UNDERGROUND_Y_OFFSET
+    const sourceInsetX = Math.min(
+      UNDERGROUND_SOURCE_INSET_X,
+      Math.floor((undergroundImage.naturalWidth - 1) * 0.25),
+    )
+    const sourceWidth = Math.max(1, undergroundImage.naturalWidth - sourceInsetX * 2)
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(0, seamY, metrics.width, targetHeight)
+    ctx.clip()
+    ctx.drawImage(
+      undergroundImage,
+      sourceInsetX,
+      0,
+      sourceWidth,
+      undergroundImage.naturalHeight,
+      drawX,
+      drawY,
+      drawW,
+      drawH,
+    )
+    ctx.restore()
+    return
+  }
+
+  const undergroundShade = ctx.createLinearGradient(0, groundY, 0, metrics.height)
+  undergroundShade.addColorStop(0, 'rgba(14, 18, 26, 0.42)')
+  undergroundShade.addColorStop(1, 'rgba(7, 10, 16, 0.7)')
+  ctx.fillStyle = undergroundShade
+  ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
+}
+
+function drawMiningDepthProgression(params: {
+  ctx: CanvasRenderingContext2D
+  camera: CameraState
+  metrics: SceneMetrics
+  zoneX: number
+  restorationPercent: number
+}): void {
+  const { ctx, camera, metrics, zoneX, restorationPercent } = params
+  const shaftWidth = metrics.scale * camera.zoom * 0.32
+
+  DEPTH_LAYER_MARKERS.forEach((layer) => {
+    const y = worldToScreenY(layer.worldY, camera, metrics)
+    const unlocked = restorationPercent >= layer.unlockPercent
+    const markerSize = shaftWidth * 0.1
+    const labelX = zoneX + shaftWidth * 0.86
+    ctx.fillStyle = unlocked ? layer.color : 'rgba(122, 132, 146, 0.55)'
+    ctx.beginPath()
+    ctx.arc(zoneX, y, markerSize, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.font = `${Math.max(11, Math.round(metrics.scale * camera.zoom * 0.028))}px 'Trebuchet MS', 'Segoe UI', sans-serif`
+    ctx.textAlign = 'left'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = unlocked ? 'rgba(232, 242, 255, 0.92)' : 'rgba(150, 160, 176, 0.74)'
+    const status = unlocked ? 'ONLINE' : `LOCK ${layer.unlockPercent}%`
+    ctx.fillText(`${layer.label}  ${status}`, labelX, y)
+
+    if (!unlocked) {
+      drawLockGlyph(ctx, labelX - shaftWidth * 0.18, y + shaftWidth * 0.2, shaftWidth * 0.22, false)
+    }
+  })
+
+}
+
+function drawExtractionPump(params: {
+  ctx: CanvasRenderingContext2D
+  zoneX: number
+  zoneY: number
+  zoneRadiusPx: number
+  groundY: number
+  pumpImage: HTMLImageElement | null
+  tubeImage: HTMLImageElement | null
+  moduleCount: number
+  tint: number
+  ritualPhase: 'idle' | 'charge' | 'flash' | 'wave' | 'settle'
+  palette: PumpPalette
+}): void {
+  const {
+    ctx,
+    zoneX,
+    zoneY,
+    zoneRadiusPx,
+    groundY,
+    pumpImage,
+    tubeImage,
+    moduleCount,
+    tint,
+    ritualPhase,
+    palette,
+  } = params
+  const bodyWidth = zoneRadiusPx * 1.55
+  const bodyHeight = zoneRadiusPx * 2.2
+  const bodyLeft = zoneX - bodyWidth * 0.5
+  const bodyTop = zoneY - bodyHeight * 0.82
+  const platformY = groundY - zoneRadiusPx * 0.04
+
+  const ritualBoost =
+    ritualPhase === 'flash' ? 0.34 : ritualPhase === 'wave' ? 0.2 : ritualPhase === 'charge' ? 0.1 : 0
+  const hasPumpSprite =
+    !!pumpImage &&
+    pumpImage.complete &&
+    pumpImage.naturalWidth > 0 &&
+    pumpImage.naturalHeight > 0
+
+  if (hasPumpSprite && pumpImage) {
+    const spriteScale = Math.max(
+      (bodyWidth * 1.65) / pumpImage.naturalWidth,
+      (bodyHeight * 3) / pumpImage.naturalHeight,
+    )
+    const spriteW = pumpImage.naturalWidth * spriteScale
+    const spriteH = pumpImage.naturalHeight * spriteScale
+    const spriteX = zoneX - spriteW * 0.5
+    const spriteY = platformY - spriteH + zoneRadiusPx * PUMP_SPRITE_Y_OFFSET
+
+    ctx.save()
+    ctx.filter = `drop-shadow(0 ${Math.max(2, zoneRadiusPx * 0.04)}px ${Math.max(2, zoneRadiusPx * 0.08)}px rgba(0, 0, 0, 0.6))`
+    ctx.globalAlpha = 0.95 + tint * 0.05 + ritualBoost * 0.06
+    ctx.drawImage(pumpImage, spriteX, spriteY, spriteW, spriteH)
+    const hasTubeSprite =
+      !!tubeImage &&
+      tubeImage.complete &&
+      tubeImage.naturalWidth > 0 &&
+      tubeImage.naturalHeight > 0
+    if (hasTubeSprite && tubeImage) {
+      // Pump_Tube replaces the temporary tube look in Pump_Red.
+      const tubeW = spriteW * PUMP_TUBE_SCALE
+      const tubeH = spriteH * PUMP_TUBE_SCALE
+      const tubeX = zoneX - tubeW * 0.5
+      const tubeY = spriteY + zoneRadiusPx * PUMP_TUBE_Y_OFFSET
+      ctx.globalAlpha = 0.98 + ritualBoost * 0.02
+      ctx.drawImage(tubeImage, tubeX, tubeY, tubeW, tubeH)
+    }
+    ctx.filter = 'none'
+    ctx.restore()
+  } else {
+    const shell = ctx.createLinearGradient(0, bodyTop, 0, bodyTop + bodyHeight)
+    shell.addColorStop(0, palette.steelA)
+    shell.addColorStop(1, palette.steelB)
+    ctx.fillStyle = shell
+    ctx.beginPath()
+    ctx.roundRect(bodyLeft, bodyTop, bodyWidth, bodyHeight, zoneRadiusPx * 0.32)
+    ctx.fill()
+  }
+
+  const clampedModules = Math.max(0, Math.min(12, moduleCount))
+  for (let i = 0; i < clampedModules; i += 1) {
+    const side = i % 2 === 0 ? -1 : 1
+    const row = Math.floor(i / 2)
+    const moduleWidth = zoneRadiusPx * 0.46
+    const moduleHeight = zoneRadiusPx * 0.22
+    const moduleX = zoneX + side * (bodyWidth * 0.66) - moduleWidth * 0.5
+    const moduleY = bodyTop + zoneRadiusPx * 0.24 + row * zoneRadiusPx * 0.36
+    const moduleFill = `rgba(62, 78, 102, ${0.88 - row * 0.03})`
+    ctx.fillStyle = moduleFill
+    ctx.beginPath()
+    ctx.roundRect(moduleX, moduleY, moduleWidth, moduleHeight, zoneRadiusPx * 0.05)
+    ctx.fill()
+
+    ctx.fillStyle = palette.accent
+    ctx.beginPath()
+    ctx.roundRect(
+      moduleX + moduleWidth * 0.16,
+      moduleY + moduleHeight * 0.28,
+      moduleWidth * 0.68,
+      moduleHeight * 0.44,
+      zoneRadiusPx * 0.04,
+    )
+    ctx.fill()
+
+    ctx.strokeStyle = 'rgba(18, 24, 34, 0.85)'
+    ctx.lineWidth = zoneRadiusPx * 0.04
+    ctx.beginPath()
+    ctx.moveTo(moduleX + (side < 0 ? moduleWidth : 0), moduleY + moduleHeight * 0.5)
+    ctx.lineTo(zoneX + side * (bodyWidth * 0.5), moduleY + moduleHeight * 0.5)
+    ctx.stroke()
+  }
+
 }
 
 function drawLockGlyph(
@@ -595,6 +887,10 @@ export function ExtractionCanvas({
   agents,
   beacons,
   selectedBuildingId,
+  prestigeReadiness,
+  worldVisualTier,
+  ritualPhase,
+  inputLocked,
   onExtract,
   onSelectBuilding,
 }: CanvasProps) {
@@ -606,22 +902,28 @@ export function ExtractionCanvas({
     agents,
     beacons,
     selectedBuildingId,
+    prestigeReadiness,
+    worldVisualTier,
+    ritualPhase,
+    inputLocked,
     onExtract,
     onSelectBuilding,
   })
   const lastFrameTime = useRef<number>(0)
   const metricsRef = useRef<SceneMetrics>({ width: 1, height: 1, scale: 1 })
-  const cameraRef = useRef<CameraState>({ x: EXTRACTION_WORLD_X, y: 0.52, zoom: 1 })
+  const cameraRef = useRef<CameraState>({ x: EXTRACTION_WORLD_X, y: DEPTH_MIN_CAMERA_Y, zoom: 1 })
   const panTargetRef = useRef<number>(EXTRACTION_WORLD_X)
-  const orbImageRef = useRef<HTMLImageElement | null>(null)
-  const orbSpriteLayoutRef = useRef<SpriteSheetLayout | null>(null)
+  const depthTargetRef = useRef<number>(DEPTH_MIN_CAMERA_Y)
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
-  const groundImageRef = useRef<HTMLImageElement | null>(null)
+  const undergroundImageRef = useRef<HTMLImageElement | null>(null)
+  const pumpImageRef = useRef<HTMLImageElement | null>(null)
+  const pumpTubeImageRef = useRef<HTMLImageElement | null>(null)
   const groundBuildingImageRefs = useRef<Partial<Record<string, HTMLImageElement>>>({})
   const dragRef = useRef<DragState>({
     active: false,
     pointerId: -1,
     lastX: 0,
+    lastY: 0,
     moved: false,
   })
 
@@ -678,10 +980,10 @@ export function ExtractionCanvas({
         }
         const slot = groundSlots[groundIndex] ?? 0
         let worldX = WORLD_PADDING + slot * BUILDING_SPACING
-        const distFromOrb = Math.abs(worldX - EXTRACTION_WORLD_X)
-        if (distFromOrb < GROUND_BUILDING_ORB_CLEARANCE) {
+        const distFromPump = Math.abs(worldX - EXTRACTION_WORLD_X)
+        if (distFromPump < GROUND_BUILDING_PUMP_CLEARANCE) {
           const direction = worldX <= EXTRACTION_WORLD_X ? -1 : 1
-          worldX = EXTRACTION_WORLD_X + direction * GROUND_BUILDING_ORB_CLEARANCE
+          worldX = EXTRACTION_WORLD_X + direction * GROUND_BUILDING_PUMP_CLEARANCE
         }
         worldX += GROUND_BUILDING_X_OFFSETS[building.id] ?? 0
         layouts.push({
@@ -726,34 +1028,6 @@ export function ExtractionCanvas({
   const groundBuildingSpriteSources = Object.values(GROUND_BUILDING_SPRITE_ASSETS).join('|')
 
   useEffect(() => {
-    const spriteSheet = new Image()
-    let fallbackImage: HTMLImageElement | null = null
-
-    spriteSheet.onload = () => {
-      orbSpriteLayoutRef.current = resolveSpriteSheetLayout(
-        spriteSheet.naturalWidth,
-        spriteSheet.naturalHeight,
-        ORB_SPRITE_TOTAL_FRAMES,
-      )
-    }
-    spriteSheet.onerror = () => {
-      fallbackImage = new Image()
-      fallbackImage.src = orbCoreImageSrc
-      orbImageRef.current = fallbackImage
-      orbSpriteLayoutRef.current = null
-    }
-    spriteSheet.src = orbSpriteSheetSrc
-    orbImageRef.current = spriteSheet
-
-    return () => {
-      if (orbImageRef.current === spriteSheet || orbImageRef.current === fallbackImage) {
-        orbImageRef.current = null
-      }
-      orbSpriteLayoutRef.current = null
-    }
-  }, [orbCoreImageSrc, orbSpriteSheetSrc])
-
-  useEffect(() => {
     const image = new Image()
     image.src = backgroundImageSrc
     backgroundImageRef.current = image
@@ -762,18 +1036,40 @@ export function ExtractionCanvas({
         backgroundImageRef.current = null
       }
     }
-  }, [backgroundImageSrc])
+  }, [])
 
   useEffect(() => {
     const image = new Image()
-    image.src = groundImageSrc
-    groundImageRef.current = image
+    image.src = undergroundImageSrc
+    undergroundImageRef.current = image
     return () => {
-      if (groundImageRef.current === image) {
-        groundImageRef.current = null
+      if (undergroundImageRef.current === image) {
+        undergroundImageRef.current = null
       }
     }
-  }, [groundImageSrc])
+  }, [])
+
+  useEffect(() => {
+    const image = new Image()
+    image.src = pumpRedImageSrc
+    pumpImageRef.current = image
+    return () => {
+      if (pumpImageRef.current === image) {
+        pumpImageRef.current = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const image = new Image()
+    image.src = pumpTubeImageSrc
+    pumpTubeImageRef.current = image
+    return () => {
+      if (pumpTubeImageRef.current === image) {
+        pumpTubeImageRef.current = null
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const loadedImages: Partial<Record<string, HTMLImageElement>> = {}
@@ -800,6 +1096,10 @@ export function ExtractionCanvas({
       agents,
       beacons,
       selectedBuildingId,
+      prestigeReadiness,
+      worldVisualTier,
+      ritualPhase,
+      inputLocked,
       onExtract,
       onSelectBuilding,
     }
@@ -810,6 +1110,10 @@ export function ExtractionCanvas({
     agents,
     beacons,
     selectedBuildingId,
+    prestigeReadiness,
+    worldVisualTier,
+    ritualPhase,
+    inputLocked,
     onExtract,
     onSelectBuilding,
   ])
@@ -873,16 +1177,20 @@ export function ExtractionCanvas({
       const selectedBuilding = props.selectedBuildingId
         ? buildingById.get(props.selectedBuildingId) ?? null
         : null
+      const depthBounds = getDepthBounds(props.restorationPercent, props.worldVisualTier)
       const targetZoom = selectedBuilding
         ? selectedBuilding.placement === 'orbital'
           ? 1.52
           : 1.45
         : 1
+      if (!selectedBuilding) {
+        depthTargetRef.current = clamp(depthTargetRef.current, depthBounds.minY, depthBounds.maxY)
+      }
       const targetY = selectedBuilding
         ? selectedBuilding.placement === 'orbital'
           ? EXTRACTION_WORLD_Y
           : GROUND_WORLD_Y - 0.02
-        : 0.52
+        : depthTargetRef.current
       const unclampedTargetX = selectedBuilding ? selectedBuilding.worldX : panTargetRef.current
       const targetX = clampCameraX(unclampedTargetX, targetZoom, metrics)
 
@@ -892,8 +1200,24 @@ export function ExtractionCanvas({
       cameraRef.current.x = clampCameraX(cameraRef.current.x, cameraRef.current.zoom, metrics)
 
       const camera = cameraRef.current
-      const tint = clamp(props.restorationPercent / 100, 0, 1)
-      const baseHue = 188 + tint * 106
+      const readinessBoost =
+        props.prestigeReadiness === 'ready'
+          ? 0.18
+          : props.prestigeReadiness === 'critical'
+            ? 0.12
+            : props.prestigeReadiness === 'charged'
+              ? 0.06
+              : 0
+      const ritualBoost =
+        props.ritualPhase === 'flash'
+          ? 0.35
+          : props.ritualPhase === 'wave'
+            ? 0.18
+            : props.ritualPhase === 'charge'
+              ? 0.08
+              : 0
+      const tierBoost = Math.min(0.24, props.worldVisualTier * 0.03)
+      const tint = clamp(props.restorationPercent / 100 + readinessBoost + ritualBoost + tierBoost, 0, 1.35)
       const groundY = worldToScreenY(GROUND_WORLD_Y, camera, metrics)
       const worldCenterX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
       const { minX: cameraMinX, maxX: cameraMaxX } = getCameraBounds(camera.zoom, metrics)
@@ -914,6 +1238,7 @@ export function ExtractionCanvas({
         backgroundImage.complete &&
         backgroundImage.naturalWidth > 0 &&
         backgroundImage.naturalHeight > 0
+      let backgroundTransform: BackgroundTransform | null = null
 
       if (hasBackgroundImage && backgroundImage) {
         const coverScale = Math.max(
@@ -933,166 +1258,63 @@ export function ExtractionCanvas({
           drawH * BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO +
           BACKGROUND_GROUND_OVERLAP_PX
         ctx.drawImage(backgroundImage, drawX, drawY, drawW, drawH)
+        backgroundTransform = {
+          drawX,
+          drawW,
+          seamY: drawY + drawH * BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO,
+        }
       } else {
         drawGreyCity(ctx, metrics, camera, tint)
-
-        for (let i = 0; i < stars.length; i += 1) {
-          const star = stars[i]
-          const flicker = 0.2 + Math.sin(now * 0.001 * star.speed + star.phase) * 0.2
-          ctx.fillStyle = `rgba(198, 207, 222, ${0.1 + flicker * 0.18})`
-          ctx.beginPath()
-          ctx.arc(
-            star.x * metrics.width,
-            star.y * metrics.height,
-            star.radius * metrics.scale,
-            0,
-            Math.PI * 2,
-          )
-          ctx.fill()
-        }
       }
 
-      const groundImage = groundImageRef.current
-      const hasGroundImage =
-        !!groundImage &&
-        groundImage.complete &&
-        groundImage.naturalWidth > 0 &&
-        groundImage.naturalHeight > 0
+      drawNightSkyStars(
+        ctx,
+        metrics,
+        stars,
+        now,
+        backgroundTransform?.seamY ?? groundY,
+      )
 
-      if (hasGroundImage && groundImage) {
-        // Keep a subtle dark base so transparent areas in the ground image blend cleanly.
-        ctx.fillStyle = 'rgba(17, 21, 31, 0.97)'
-        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
-
-        const drawW = Math.max(
-          metrics.width,
-          (metrics.width + maxScenePanPx * 2) * GROUND_IMAGE_SCALE,
-        )
-        const drawH = (groundImage.naturalHeight / groundImage.naturalWidth) * drawW
-        const drawX = worldCenterX - drawW * 0.5
-        const visibleTopOffset = drawH * GROUND_IMAGE_TOP_TRIM_RATIO
-        const drawY = groundY - visibleTopOffset + metrics.scale * GROUND_IMAGE_Y_OFFSET
-        ctx.drawImage(groundImage, drawX, drawY, drawW, drawH)
-      } else {
-        const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
-        ground.addColorStop(0, 'rgba(36, 41, 54, 0.92)')
-        ground.addColorStop(1, 'rgba(17, 21, 31, 0.97)')
-        ctx.fillStyle = ground
-        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
-
-        ctx.strokeStyle = 'rgba(176, 190, 210, 0.34)'
-        ctx.lineWidth = Math.max(1, metrics.scale * 0.002)
-        ctx.beginPath()
-        ctx.moveTo(0, groundY)
-        ctx.lineTo(metrics.width, groundY)
-        ctx.stroke()
-      }
+      ctx.strokeStyle = 'rgba(156, 166, 182, 0.72)'
+      ctx.lineWidth = Math.max(1, metrics.scale * 0.0032)
+      ctx.beginPath()
+      ctx.moveTo(0, groundY)
+      ctx.lineTo(metrics.width, groundY)
+      ctx.stroke()
 
       const zoneX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
       const zoneY = worldToScreenY(EXTRACTION_WORLD_Y, camera, metrics)
       const zoneRadiusPx = EXTRACTION_ZONE_RADIUS * metrics.scale * camera.zoom
-
-      const zoneAura = ctx.createRadialGradient(
-        zoneX,
-        zoneY,
-        zoneRadiusPx * 0.6,
-        zoneX,
-        zoneY,
-        zoneRadiusPx * 1.25,
+      const palette = getPumpPalette(props.restorationPercent, props.worldVisualTier)
+      drawSubsurfaceChroma(
+        ctx,
+        metrics,
+        groundY,
+        worldCenterX,
+        maxScenePanPx,
+        undergroundImageRef.current,
+        backgroundTransform,
       )
-      zoneAura.addColorStop(0, `rgba(130, 224, 255, ${0.1 + tint * 0.12})`)
-      zoneAura.addColorStop(1, 'rgba(130, 224, 255, 0)')
-      ctx.fillStyle = zoneAura
-      ctx.beginPath()
-      ctx.arc(zoneX, zoneY, zoneRadiusPx * 1.25, 0, Math.PI * 2)
-      ctx.fill()
-
-      const innerRadius = zoneRadiusPx
-      const orbImage = orbImageRef.current
-      const orbSpriteLayout = orbSpriteLayoutRef.current
-      if (
-        orbImage &&
-        orbImage.complete &&
-        orbImage.naturalWidth > 0 &&
-        orbImage.naturalHeight > 0
-      ) {
-        const sourceWidth = orbSpriteLayout ? orbSpriteLayout.frameWidth : orbImage.naturalWidth
-        const sourceHeight = orbSpriteLayout ? orbSpriteLayout.frameHeight : orbImage.naturalHeight
-        const minSide = Math.min(sourceWidth, sourceHeight)
-        const baseSize = innerRadius * 2
-        const srcScale = baseSize / minSide
-        const drawW = sourceWidth * srcScale
-        const drawH = sourceHeight * srcScale
-        const pulseScale = 1 + Math.sin(now * 0.00085) * 0.012
-        const finalW = drawW * pulseScale
-        const finalH = drawH * pulseScale
-        const frameIndex = (() => {
-          if (!orbSpriteLayout || ORB_SPRITE_TOTAL_FRAMES <= 1) {
-            return 0
-          }
-          const pingPongLength = ORB_SPRITE_TOTAL_FRAMES * 2 - 2
-          const tick = Math.floor(now * 0.001 * ORB_SPRITE_FPS)
-          const loopIndex = tick % pingPongLength
-          return loopIndex < ORB_SPRITE_TOTAL_FRAMES
-            ? loopIndex
-            : pingPongLength - loopIndex
-        })()
-        const frameColumn = orbSpriteLayout ? frameIndex % orbSpriteLayout.columns : 0
-        const frameRow = orbSpriteLayout ? Math.floor(frameIndex / orbSpriteLayout.columns) : 0
-        const sourceX = orbSpriteLayout ? frameColumn * orbSpriteLayout.frameWidth : 0
-        const sourceY = orbSpriteLayout ? frameRow * orbSpriteLayout.frameHeight : 0
-
-        ctx.save()
-        ctx.beginPath()
-        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
-        ctx.clip()
-        ctx.globalAlpha = 0.9 + tint * 0.1
-        ctx.drawImage(
-          orbImage,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
-          zoneX - finalW / 2,
-          zoneY - finalH / 2,
-          finalW,
-          finalH,
-        )
-        ctx.restore()
-
-        const gloss = ctx.createRadialGradient(
-          zoneX - innerRadius * 0.36,
-          zoneY - innerRadius * 0.36,
-          innerRadius * 0.06,
-          zoneX,
-          zoneY,
-          innerRadius * 1.1,
-        )
-        gloss.addColorStop(0, 'rgba(255, 255, 255, 0.28)')
-        gloss.addColorStop(0.4, 'rgba(255, 255, 255, 0.08)')
-        gloss.addColorStop(1, 'rgba(255, 255, 255, 0)')
-        ctx.fillStyle = gloss
-        ctx.beginPath()
-        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
-        ctx.fill()
-      } else {
-        const liquid = ctx.createRadialGradient(
-          zoneX - innerRadius * 0.34,
-          zoneY - innerRadius * 0.34,
-          innerRadius * 0.05,
-          zoneX,
-          zoneY,
-          innerRadius * 1.1,
-        )
-        liquid.addColorStop(0, `hsla(${baseHue + 30}, ${72 + tint * 18}%, ${66 + tint * 16}%, 0.95)`)
-        liquid.addColorStop(0.35, `hsla(${baseHue - 10}, ${76 + tint * 16}%, ${58 + tint * 14}%, 0.9)`)
-        liquid.addColorStop(0.7, `hsla(${baseHue + 58}, ${78 + tint * 14}%, ${51 + tint * 12}%, 0.88)`)
-        liquid.addColorStop(1, `hsla(${baseHue + 92}, ${60 + tint * 14}%, ${38 + tint * 8}%, 0.84)`)
-        ctx.fillStyle = liquid
-        ctx.beginPath()
-        ctx.arc(zoneX, zoneY, innerRadius, 0, Math.PI * 2)
-        ctx.fill()
-      }
+      drawMiningDepthProgression({
+        ctx,
+        camera,
+        metrics,
+        zoneX,
+        restorationPercent: props.restorationPercent,
+      })
+      drawExtractionPump({
+        ctx,
+        zoneX,
+        zoneY,
+        zoneRadiusPx,
+        groundY,
+        pumpImage: pumpImageRef.current,
+        tubeImage: pumpTubeImageRef.current,
+        moduleCount: Math.max(0, props.unlockedBuildings - 1),
+        tint,
+        ritualPhase: props.ritualPhase,
+        palette,
+      })
 
       const buildingBoxes: Array<{ building: BuildingLayout; rect: { x: number; y: number; width: number; height: number } }> = []
       for (let i = 0; i < buildings.length; i += 1) {
@@ -1229,6 +1451,19 @@ export function ExtractionCanvas({
         ctx.fill()
       }
 
+      if (props.ritualPhase !== 'idle') {
+        const overlayAlpha =
+          props.ritualPhase === 'flash'
+            ? 0.34
+            : props.ritualPhase === 'wave'
+              ? 0.2
+              : props.ritualPhase === 'charge'
+                ? 0.12
+                : 0.08
+        ctx.fillStyle = `rgba(180, 236, 255, ${overlayAlpha})`
+        ctx.fillRect(0, 0, metrics.width, metrics.height)
+      }
+
       ctx.restore()
       rafId = requestAnimationFrame(draw)
     }
@@ -1238,6 +1473,7 @@ export function ExtractionCanvas({
   }, [buildingById, buildings, stars])
 
   const handlePointerDown: PointerEventHandler<HTMLCanvasElement> = (event) => {
+    if (latest.current.inputLocked) return
     const canvas = canvasRef.current
     if (!canvas) return
     canvas.setPointerCapture(event.pointerId)
@@ -1245,6 +1481,7 @@ export function ExtractionCanvas({
       active: true,
       pointerId: event.pointerId,
       lastX: event.clientX,
+      lastY: event.clientY,
       moved: false,
     }
   }
@@ -1253,30 +1490,64 @@ export function ExtractionCanvas({
     const drag = dragRef.current
     if (!drag.active || drag.pointerId !== event.pointerId) return
     const dx = event.clientX - drag.lastX
+    const dy = event.clientY - drag.lastY
     drag.lastX = event.clientX
+    drag.lastY = event.clientY
 
-    if (Math.abs(dx) > 1.5) {
+    if (Math.abs(dx) > 1.5 || Math.abs(dy) > 1.5) {
       drag.moved = true
     }
     const canvas = canvasRef.current
     if (!canvas) return
     const rect = canvas.getBoundingClientRect()
     const renderScaleX = rect.width > 0 ? canvas.width / rect.width : 1
+    const renderScaleY = rect.height > 0 ? canvas.height / rect.height : 1
     const metrics = metricsRef.current
     const camera = cameraRef.current
-    const worldDelta = (dx * renderScaleX) / (metrics.scale * camera.zoom)
-    const targetX = clampCameraX(panTargetRef.current - worldDelta, camera.zoom, metrics)
+    const worldDeltaX = (dx * renderScaleX) / (metrics.scale * camera.zoom)
+    const targetX = clampCameraX(panTargetRef.current - worldDeltaX, camera.zoom, metrics)
     panTargetRef.current = targetX
+    const worldDeltaY = (dy * renderScaleY) / (metrics.scale * camera.zoom)
+    const depthBounds = getDepthBounds(latest.current.restorationPercent, latest.current.worldVisualTier)
+    depthTargetRef.current = clamp(
+      depthTargetRef.current - worldDeltaY,
+      depthBounds.minY,
+      depthBounds.maxY,
+    )
 
     if (latest.current.selectedBuildingId && drag.moved) {
       latest.current.onSelectBuilding(null)
     }
   }
 
+  const handleWheel: WheelEventHandler<HTMLCanvasElement> = (event) => {
+    if (latest.current.inputLocked || latest.current.selectedBuildingId) {
+      return
+    }
+    event.preventDefault()
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const rect = canvas.getBoundingClientRect()
+    const renderScaleY = rect.height > 0 ? canvas.height / rect.height : 1
+    const metrics = metricsRef.current
+    const camera = cameraRef.current
+    const worldDeltaY = (event.deltaY * renderScaleY) / (metrics.scale * camera.zoom)
+    const depthBounds = getDepthBounds(latest.current.restorationPercent, latest.current.worldVisualTier)
+    depthTargetRef.current = clamp(
+      depthTargetRef.current + worldDeltaY,
+      depthBounds.minY,
+      depthBounds.maxY,
+    )
+  }
+
   const handlePointerUp: PointerEventHandler<HTMLCanvasElement> = (event) => {
     const drag = dragRef.current
     if (!drag.active || drag.pointerId !== event.pointerId) return
     drag.active = false
+
+    if (latest.current.inputLocked) {
+      return
+    }
 
     if (drag.moved) {
       return
@@ -1327,8 +1598,9 @@ export function ExtractionCanvas({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerCancel}
+      onWheel={handleWheel}
       role="img"
-      aria-label="Color extraction city with selectable buildings"
+      aria-label="Underground color pump facility with selectable buildings"
     />
   )
 }

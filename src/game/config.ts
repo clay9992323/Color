@@ -1,17 +1,27 @@
-import type { BuildingDefinition, BuildingUpgradeOption, UpgradeLaneDefinition } from './types'
+import type {
+  BaseColorId,
+  BuildingDefinition,
+  BuildingUpgradeOption,
+  ColorId,
+  MetaTreeNode,
+  NeonColorId,
+  RecipeDefinition,
+  UpgradeLaneDefinition,
+} from './types'
 
 export const GAME_TITLE = 'Chromavault Extraction'
 
-export const SAVE_KEY = 'chromavault-save-v1'
-export const SAVE_VERSION = 1
+export const SAVE_KEY = 'chromavault-save-v2'
+export const LEGACY_SAVE_KEYS = ['chromavault-save-v1']
+export const SAVE_VERSION = 2
 
 export const TICK_RATE_HZ = 10
 export const TICK_SECONDS = 1 / TICK_RATE_HZ
 export const SAVE_INTERVAL_MS = 10_000
-export const OFFLINE_CAP_SECONDS = 8 * 60 * 60
+export const OFFLINE_CAP_SECONDS = 3 * 60 * 60
 export const OFFLINE_EFFICIENCY = 0.8
 
-export const RESTORATION_TARGET_POINTS = 320_000
+export const RESTORATION_TARGET_POINTS = 3_000_000
 export const MAX_VISIBLE_OPERATORS = 48
 export const MAX_BEACONS = 12
 export const MAX_PARTICLES = 80
@@ -28,6 +38,142 @@ export const MOMENTUM_DECAY_PER_SECOND = 0.045
 export const MOMENTUM_MAX_BONUS = 0.45
 export const UNLOCK_SURGE_SECONDS = 20
 export const UNLOCK_SURGE_BONUS = 0.35
+
+export const BLUE_UNLOCK_RESTORATION_PERCENT = 22
+export const YELLOW_UNLOCK_RESTORATION_PERCENT = 54
+
+export const BASE_COLORS: BaseColorId[] = ['red', 'blue', 'yellow']
+export const NORMAL_COLORS: ColorId[] = ['red', 'blue', 'yellow', 'green', 'orange', 'violet']
+export const NEON_COLORS: NeonColorId[] = [
+  'neon_red',
+  'neon_blue',
+  'neon_yellow',
+  'neon_green',
+  'neon_orange',
+  'neon_violet',
+]
+
+export const BASE_EXTRACTION_SPLIT: Record<BaseColorId, number> = {
+  red: 0.34,
+  blue: 0.33,
+  yellow: 0.33,
+}
+
+export const NEON_COLOR_MAP: Record<Exclude<ColorId, NeonColorId>, NeonColorId> = {
+  red: 'neon_red',
+  blue: 'neon_blue',
+  yellow: 'neon_yellow',
+  green: 'neon_green',
+  orange: 'neon_orange',
+  violet: 'neon_violet',
+}
+
+export const COLOR_VALUES: Record<ColorId, number> = {
+  red: 1,
+  blue: 1.1,
+  yellow: 1.1,
+  orange: 2.2,
+  green: 2.3,
+  violet: 2.7,
+  neon_red: 3.5,
+  neon_blue: 3.85,
+  neon_yellow: 3.85,
+  neon_green: 8.05,
+  neon_orange: 7.7,
+  neon_violet: 9.45,
+}
+
+export const CRAFT_RECIPES: RecipeDefinition[] = [
+  {
+    id: 'craft_green',
+    name: 'Green Synthesis',
+    inputs: { blue: 10, yellow: 10 },
+    output: 'green',
+    outputAmount: 8,
+    unitDurationSeconds: 4,
+  },
+  {
+    id: 'craft_orange',
+    name: 'Orange Synthesis',
+    inputs: { red: 10, yellow: 10 },
+    output: 'orange',
+    outputAmount: 8,
+    unitDurationSeconds: 4,
+  },
+  {
+    id: 'craft_violet',
+    name: 'Violet Synthesis',
+    inputs: { red: 10, blue: 10 },
+    output: 'violet',
+    outputAmount: 8,
+    unitDurationSeconds: 4,
+  },
+]
+
+export const REFINERY_UNLOCK_PRESTIGE = 1
+export const REFINERY_INPUT_PER_BATCH = 20
+export const REFINERY_OUTPUT_PER_BATCH = 5
+export const REFINERY_CYCLE_SECONDS = 20
+
+export const EXCHANGE_BASE_FEE = 0.15
+export const EXCHANGE_FEE_REDUCTION_PER_RANK = 0.02
+
+export const PRESTIGE_READINESS_THRESHOLDS = {
+  charged: 70,
+  critical: 90,
+  ready: 100,
+} as const
+
+export const META_TREE_NODES: MetaTreeNode[] = [
+  {
+    id: 'tap_mastery',
+    branch: 'extraction',
+    name: 'Tap Mastery',
+    description: 'Increase tap extraction by 6% per rank.',
+    maxRank: 5,
+    costs: [1, 2, 4, 7, 11],
+  },
+  {
+    id: 'extract_efficiency',
+    branch: 'extraction',
+    name: 'Extract Efficiency',
+    description: 'Reduce extraction lane upgrade costs by 4% per rank.',
+    maxRank: 4,
+    costs: [1, 3, 6, 10],
+  },
+  {
+    id: 'operator_protocols',
+    branch: 'automation',
+    name: 'Operator Protocols',
+    description: 'Increase automation extraction by 5% per rank.',
+    maxRank: 5,
+    costs: [1, 2, 4, 7, 11],
+  },
+  {
+    id: 'exchange_protocols',
+    branch: 'automation',
+    name: 'Exchange Protocols',
+    description: 'Reduce exchange fee by 2% absolute per rank.',
+    maxRank: 3,
+    costs: [2, 5, 9],
+  },
+  {
+    id: 'restore_flux',
+    branch: 'diffusion',
+    name: 'Restore Flux',
+    description: 'Increase restoration conversion by 5% per rank.',
+    maxRank: 5,
+    costs: [1, 2, 4, 7, 11],
+  },
+  {
+    id: 'refinery_mastery',
+    branch: 'diffusion',
+    name: 'Refinery Mastery',
+    description: 'Increase refinery neon output by 8% per rank.',
+    maxRank: 4,
+    costs: [2, 4, 7, 11],
+  },
+]
 
 export const BUILDINGS: BuildingDefinition[] = [
   {
@@ -264,9 +410,4 @@ export const OPERATOR_CYCLE_SECONDS = {
   recover: 0.4,
 } as const
 
-export const OPERATOR_PHASE_ORDER = [
-  'approach',
-  'siphon',
-  'return',
-  'recover',
-] as const
+export const OPERATOR_PHASE_ORDER = ['approach', 'siphon', 'return', 'recover'] as const

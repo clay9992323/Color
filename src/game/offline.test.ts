@@ -1,27 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { OFFLINE_CAP_SECONDS } from './config'
-import { calculateOfflineGain } from './economy'
+import { calculateOfflineGain, createDefaultMetaTree } from './economy'
 
 describe('offline gains', () => {
-  it('caps elapsed time at configured limit', () => {
+  it('caps elapsed time at 3 hours per away period', () => {
     const result = calculateOfflineGain({
-      elapsedSeconds: OFFLINE_CAP_SECONDS + 2000,
+      elapsedSeconds: OFFLINE_CAP_SECONDS + 3_600,
       autoGainPerSec: 15,
-      diffusionMultiplier: 1.6,
+      diffusionTier: 2,
+      metaTree: createDefaultMetaTree(),
+      milestoneFlags: { blueUnlocked: true, yellowUnlocked: true, neonUnlocked: false },
     })
 
     expect(result.cappedSeconds).toBe(OFFLINE_CAP_SECONDS)
+    expect(result.extractionSecondsAwarded).toBe(OFFLINE_CAP_SECONDS)
   })
 
-  it('awards chroma and restoration from passive gain only', () => {
+  it('awards base-color inventory and restoration while away', () => {
     const result = calculateOfflineGain({
-      elapsedSeconds: 3600,
+      elapsedSeconds: 3_600,
       autoGainPerSec: 10,
-      diffusionMultiplier: 2,
+      diffusionTier: 3,
+      metaTree: createDefaultMetaTree(),
+      milestoneFlags: { blueUnlocked: true, yellowUnlocked: true, neonUnlocked: false },
     })
 
-    expect(result.chromaAwarded).toBeGreaterThan(0)
-    expect(result.restorationAwarded).toBeCloseTo(result.chromaAwarded * 2, 6)
+    expect(result.inventoryAwarded.red).toBeGreaterThan(0)
+    expect(result.inventoryAwarded.blue).toBeGreaterThan(0)
+    expect(result.inventoryAwarded.yellow).toBeGreaterThan(0)
+    expect(result.restorationAwarded).toBeGreaterThan(0)
   })
 })
-
