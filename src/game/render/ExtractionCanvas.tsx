@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, type PointerEventHandler } from 'react'
-import { BUILDINGS, MAX_BEACONS, MAX_PARTICLES, MAX_VISIBLE_OPERATORS } from '../config'
+import {
+  BUILDING_VISUAL_STAGE_SCALE,
+  BUILDINGS,
+  MAX_BEACONS,
+  MAX_PARTICLES,
+  MAX_VISIBLE_OPERATORS,
+} from '../config'
 import type { OperatorAgent, SquadBeacon, WorkforceState } from '../types'
 import orbCoreImageSrc from '../../assets/vfx/Orb_1.png'
 import orbSpriteSheetSrc from '../../assets/vfx/chroma_orb_sprite_sheet.png'
-import backgroundImageSrc from '../../assets/vfx/Background.png'
-import groundImageSrc from '../../assets/vfx/Ground.png'
+import backgroundImageSrc from '../../assets/vfx/Background_1.png'
 import missionBuildingImageSrc from '../../assets/vfx/Building_Mission_Control_1.png'
 import researchBuildingImageSrc from '../../assets/vfx/Building_Hue_Research_Lab_1.png'
 import purifierBuildingImageSrc from '../../assets/vfx/Building_Pigment_Purifier_Pixel.png'
@@ -16,6 +21,7 @@ interface CanvasProps {
   workforce: WorkforceState
   agents: OperatorAgent[]
   beacons: SquadBeacon[]
+  buildingVisualStages: Record<string, number>
   selectedBuildingId: string | null
   onExtract: () => void
   onSelectBuilding: (buildingId: string | null) => void
@@ -127,14 +133,9 @@ const GROUND_BUILDING_WORLD_Y_OFFSET = 0.13
 const EXTRACTION_ZONE_RADIUS = 0.26
 const EXTRACTION_WORLD_Y = GROUND_WORLD_Y - EXTRACTION_ZONE_RADIUS - 0.4
 const BACKGROUND_ZOOM_OUT = 0.86
-// Background.png visible content reaches y=443 in a 559px frame.
+// Portion of the background image treated as the visual "ground horizon" anchor.
 const BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO = 443 / 559
-const BACKGROUND_GROUND_OVERLAP_PX = 1
-const GROUND_IMAGE_SCALE = 1
-// Ground.png has transparent headroom before visible platform content.
-// This ratio aligns the first visible ground pixel to `groundY`.
-const GROUND_IMAGE_TOP_TRIM_RATIO = 115 / 559
-const GROUND_IMAGE_Y_OFFSET = 0
+const BACKGROUND_GROUND_OVERLAP_PX = 43
 const ORB_SPRITE_TOTAL_FRAMES = 24
 const ORB_SPRITE_FPS = 12
 const GROUND_BUILDING_X_OFFSETS: Record<string, number> = {
@@ -364,39 +365,22 @@ function drawGreyCity(
   ctx.fillRect(0, horizonY - metrics.height * 0.24, metrics.width, metrics.height * 0.3)
 }
 
-function drawLockGlyph(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  bright: boolean,
-): void {
-  const w = size
-  const h = size * 0.72
-  ctx.fillStyle = bright ? 'rgba(226, 237, 255, 0.92)' : 'rgba(98, 106, 126, 0.95)'
-  ctx.beginPath()
-  ctx.roundRect(x - w * 0.5, y - h * 0.2, w, h, w * 0.16)
-  ctx.fill()
-  ctx.strokeStyle = bright ? 'rgba(245, 252, 255, 0.9)' : 'rgba(124, 132, 154, 0.7)'
-  ctx.lineWidth = Math.max(1, size * 0.11)
-  ctx.beginPath()
-  ctx.arc(x, y - h * 0.2, w * 0.28, Math.PI * 1.02, Math.PI * 1.98)
-  ctx.stroke()
-}
-
 function drawBuilding(
   ctx: CanvasRenderingContext2D,
   layout: BuildingLayout,
   camera: CameraState,
   metrics: SceneMetrics,
   colored: boolean,
+  visualStage: number,
   tint: number,
   buildingSprites: Partial<Record<string, HTMLImageElement>>,
 ): { x: number; y: number; width: number; height: number } {
+  const safeVisualStage = clamp(Math.round(visualStage), 0, BUILDING_VISUAL_STAGE_SCALE.length - 1)
+  const stageScale = BUILDING_VISUAL_STAGE_SCALE[safeVisualStage] ?? 1
   const x = worldToScreenX(layout.worldX, camera, metrics)
   const baseY = worldToScreenY(layout.worldY, camera, metrics)
-  const width = layout.width * metrics.scale * camera.zoom
-  const height = layout.height * metrics.scale * camera.zoom
+  const width = layout.width * metrics.scale * camera.zoom * stageScale
+  const height = layout.height * metrics.scale * camera.zoom * stageScale
   const left = x - width / 2
   const top = baseY - height
 
@@ -412,9 +396,9 @@ function drawBuilding(
   if (!hasBuildingSprite) {
     const body = colored
       ? `rgba(${mixChannel(106, rgb.r, colorMix)}, ${mixChannel(112, rgb.g, colorMix)}, ${mixChannel(126, rgb.b, colorMix)}, 0.94)`
-      : 'rgba(115, 123, 140, 0.62)'
+      : 'rgba(6, 9, 14, 0.96)'
     ctx.fillStyle = body
-    ctx.strokeStyle = 'rgba(220, 232, 255, 0.28)'
+    ctx.strokeStyle = colored ? 'rgba(220, 232, 255, 0.28)' : 'rgba(18, 24, 36, 0.95)'
     ctx.lineWidth = Math.max(1, metrics.scale * 0.0026 * camera.zoom)
     ctx.beginPath()
     ctx.roundRect(left, top, width, height, Math.max(4, width * 0.08))
@@ -435,7 +419,7 @@ function drawBuilding(
     const sourceW = hasExpectedSourceShape && config ? config.width : spriteImage.naturalWidth
     const sourceH = hasExpectedSourceShape && config ? config.height : spriteImage.naturalHeight
     const baseScale = Math.min(frameW / sourceW, frameH / sourceH)
-    const scale = baseScale * (config?.scale ?? 1.2)
+    const scale = baseScale * (config?.scale ?? 1.2) * stageScale
     const drawW = sourceW * scale
     const drawH = sourceH * scale
     const drawX = x - drawW * 0.5
@@ -443,7 +427,7 @@ function drawBuilding(
 
     ctx.save()
     if (!colored) {
-      ctx.filter = 'grayscale(1) saturate(0.12) brightness(0.78)'
+      ctx.filter = 'brightness(0) saturate(0) contrast(1.15)'
     }
     ctx.drawImage(spriteImage, sourceX, sourceY, sourceW, sourceH, drawX, drawY, drawW, drawH)
     ctx.filter = 'none'
@@ -456,7 +440,7 @@ function drawBuilding(
     const podHeight = height * 0.32
     ctx.fillStyle = colored
       ? `rgba(${mixChannel(128, rgb.r, 0.48)}, ${mixChannel(144, rgb.g, 0.48)}, ${mixChannel(168, rgb.b, 0.48)}, 0.95)`
-      : 'rgba(124, 133, 152, 0.74)'
+      : 'rgba(7, 10, 16, 0.96)'
     ctx.beginPath()
     ctx.ellipse(x, nodeY, podWidth * 0.5, podHeight * 0.5, 0, 0, Math.PI * 2)
     ctx.fill()
@@ -483,7 +467,7 @@ function drawBuilding(
       ctx.fill()
       ctx.strokeStyle = colored
         ? `rgba(${mixChannel(180, rgb.r, 0.4)}, ${mixChannel(210, rgb.g, 0.4)}, ${mixChannel(238, rgb.b, 0.4)}, 0.46)`
-        : 'rgba(211, 220, 242, 0.32)'
+        : 'rgba(20, 26, 38, 0.95)'
       ctx.lineWidth = Math.max(1, metrics.scale * 0.0019 * camera.zoom)
       ctx.beginPath()
       ctx.arc(x, top + height * 0.2, width * 0.34, 0, Math.PI * 2)
@@ -495,17 +479,13 @@ function drawBuilding(
       ctx.arc(left + width * 0.82, top + height * 0.19, width * 0.14, 0, Math.PI * 2)
       ctx.fill()
     }
-
-    if (!colored) {
-      drawLockGlyph(ctx, x, top + height * 0.22, width * 0.2, false)
-    }
   } else if (!hasBuildingSprite && layout.id === 'mission') {
     ctx.fillRect(left + width * 0.1, top - height * 0.24, width * 0.26, height * 0.24)
     ctx.fillRect(left + width * 0.66, top - height * 0.28, width * 0.2, height * 0.28)
     ctx.fillRect(left + width * 0.4, top - height * 0.2, width * 0.2, height * 0.2)
     ctx.strokeStyle = colored
       ? `rgba(${mixChannel(160, rgb.r, 0.35)}, ${mixChannel(182, rgb.g, 0.35)}, ${mixChannel(210, rgb.b, 0.35)}, 0.42)`
-      : 'rgba(224, 236, 255, 0.35)'
+      : 'rgba(16, 21, 32, 0.95)'
     ctx.beginPath()
     ctx.moveTo(left + width * 0.5, top - height * 0.2)
     ctx.lineTo(left + width * 0.5, top - height * 0.46)
@@ -530,7 +510,7 @@ function drawBuilding(
     ctx.fill()
     ctx.strokeStyle = colored
       ? `rgba(${mixChannel(160, rgb.r, 0.35)}, ${mixChannel(182, rgb.g, 0.35)}, ${mixChannel(210, rgb.b, 0.35)}, 0.42)`
-      : 'rgba(224, 236, 255, 0.35)'
+      : 'rgba(16, 21, 32, 0.95)'
     ctx.beginPath()
     ctx.arc(x, top - height * 0.12, width * 0.26, Math.PI, Math.PI * 2)
     ctx.stroke()
@@ -542,35 +522,31 @@ function drawBuilding(
   if (layout.placement === 'orbital') {
     ctx.fillStyle = colored
       ? `rgba(${mixChannel(150, rgb.r, 0.35)}, ${mixChannel(180, rgb.g, 0.35)}, ${mixChannel(220, rgb.b, 0.35)}, 0.9)`
-      : 'rgba(125, 135, 160, 0.65)'
+      : 'rgba(8, 11, 17, 0.96)'
     ctx.beginPath()
     ctx.ellipse(x, baseY + height * 0.06, width * 0.42, height * 0.08, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.strokeStyle = colored
       ? `rgba(${mixChannel(175, rgb.r, 0.45)}, ${mixChannel(210, rgb.g, 0.45)}, ${mixChannel(235, rgb.b, 0.45)}, 0.45)`
-      : 'rgba(210, 222, 245, 0.3)'
+      : 'rgba(18, 25, 38, 0.95)'
     ctx.beginPath()
     ctx.moveTo(x - width * 0.34, baseY + height * 0.06)
     ctx.lineTo(x + width * 0.34, baseY + height * 0.06)
     ctx.stroke()
   }
 
-  if (!colored && layout.placement === 'ground') {
-    drawLockGlyph(ctx, x, top + height * 0.2, width * 0.16, false)
-  }
-
   if (!hasBuildingSprite) {
-    const glow = colored ? 0.28 + tint * 0.46 : 0.1
-    ctx.fillStyle = colored
-      ? `rgba(${mixChannel(170, rgb.r, 0.25)}, ${mixChannel(210, rgb.g, 0.25)}, ${mixChannel(232, rgb.b, 0.25)}, ${glow})`
-      : `rgba(176, 220, 255, ${glow})`
-    const windowRows = 3
-    const windowCols = 3
-    for (let row = 0; row < windowRows; row += 1) {
-      for (let col = 0; col < windowCols; col += 1) {
-        const wx = left + width * (0.14 + col * 0.26)
-        const wy = top + height * (0.22 + row * 0.22)
-        ctx.fillRect(wx, wy, width * 0.12, height * 0.08)
+    const glow = colored ? 0.28 + tint * 0.46 : 0
+    if (glow > 0) {
+      ctx.fillStyle = `rgba(${mixChannel(170, rgb.r, 0.25)}, ${mixChannel(210, rgb.g, 0.25)}, ${mixChannel(232, rgb.b, 0.25)}, ${glow})`
+      const windowRows = 3
+      const windowCols = 3
+      for (let row = 0; row < windowRows; row += 1) {
+        for (let col = 0; col < windowCols; col += 1) {
+          const wx = left + width * (0.14 + col * 0.26)
+          const wy = top + height * (0.22 + row * 0.22)
+          ctx.fillRect(wx, wy, width * 0.12, height * 0.08)
+        }
       }
     }
   }
@@ -594,6 +570,7 @@ export function ExtractionCanvas({
   workforce,
   agents,
   beacons,
+  buildingVisualStages,
   selectedBuildingId,
   onExtract,
   onSelectBuilding,
@@ -605,6 +582,7 @@ export function ExtractionCanvas({
     workforce,
     agents,
     beacons,
+    buildingVisualStages,
     selectedBuildingId,
     onExtract,
     onSelectBuilding,
@@ -616,7 +594,6 @@ export function ExtractionCanvas({
   const orbImageRef = useRef<HTMLImageElement | null>(null)
   const orbSpriteLayoutRef = useRef<SpriteSheetLayout | null>(null)
   const backgroundImageRef = useRef<HTMLImageElement | null>(null)
-  const groundImageRef = useRef<HTMLImageElement | null>(null)
   const groundBuildingImageRefs = useRef<Partial<Record<string, HTMLImageElement>>>({})
   const dragRef = useRef<DragState>({
     active: false,
@@ -765,17 +742,6 @@ export function ExtractionCanvas({
   }, [backgroundImageSrc])
 
   useEffect(() => {
-    const image = new Image()
-    image.src = groundImageSrc
-    groundImageRef.current = image
-    return () => {
-      if (groundImageRef.current === image) {
-        groundImageRef.current = null
-      }
-    }
-  }, [groundImageSrc])
-
-  useEffect(() => {
     const loadedImages: Partial<Record<string, HTMLImageElement>> = {}
     const entries = Object.entries(GROUND_BUILDING_SPRITE_ASSETS)
     for (let i = 0; i < entries.length; i += 1) {
@@ -799,6 +765,7 @@ export function ExtractionCanvas({
       workforce,
       agents,
       beacons,
+      buildingVisualStages,
       selectedBuildingId,
       onExtract,
       onSelectBuilding,
@@ -809,6 +776,7 @@ export function ExtractionCanvas({
     workforce,
     agents,
     beacons,
+    buildingVisualStages,
     selectedBuildingId,
     onExtract,
     onSelectBuilding,
@@ -933,6 +901,22 @@ export function ExtractionCanvas({
           drawH * BACKGROUND_IMAGE_BOTTOM_VISIBLE_RATIO +
           BACKGROUND_GROUND_OVERLAP_PX
         ctx.drawImage(backgroundImage, drawX, drawY, drawW, drawH)
+
+        const skyHeight = Math.max(metrics.height * 0.38, groundY - metrics.height * 0.06)
+        for (let i = 0; i < stars.length; i += 1) {
+          const star = stars[i]
+          const flicker = 0.2 + Math.sin(now * 0.001 * star.speed + star.phase) * 0.2
+          ctx.fillStyle = `rgba(205, 220, 245, ${0.08 + flicker * 0.2})`
+          ctx.beginPath()
+          ctx.arc(
+            star.x * metrics.width,
+            star.y * skyHeight,
+            star.radius * metrics.scale,
+            0,
+            Math.PI * 2,
+          )
+          ctx.fill()
+        }
       } else {
         drawGreyCity(ctx, metrics, camera, tint)
 
@@ -952,60 +936,19 @@ export function ExtractionCanvas({
         }
       }
 
-      const groundImage = groundImageRef.current
-      const hasGroundImage =
-        !!groundImage &&
-        groundImage.complete &&
-        groundImage.naturalWidth > 0 &&
-        groundImage.naturalHeight > 0
+      ctx.fillStyle = 'rgba(86, 92, 106, 0.98)'
+      ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
 
-      if (hasGroundImage && groundImage) {
-        // Keep a subtle dark base so transparent areas in the ground image blend cleanly.
-        ctx.fillStyle = 'rgba(17, 21, 31, 0.97)'
-        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
-
-        const drawW = Math.max(
-          metrics.width,
-          (metrics.width + maxScenePanPx * 2) * GROUND_IMAGE_SCALE,
-        )
-        const drawH = (groundImage.naturalHeight / groundImage.naturalWidth) * drawW
-        const drawX = worldCenterX - drawW * 0.5
-        const visibleTopOffset = drawH * GROUND_IMAGE_TOP_TRIM_RATIO
-        const drawY = groundY - visibleTopOffset + metrics.scale * GROUND_IMAGE_Y_OFFSET
-        ctx.drawImage(groundImage, drawX, drawY, drawW, drawH)
-      } else {
-        const ground = ctx.createLinearGradient(0, groundY - 20, 0, metrics.height)
-        ground.addColorStop(0, 'rgba(36, 41, 54, 0.92)')
-        ground.addColorStop(1, 'rgba(17, 21, 31, 0.97)')
-        ctx.fillStyle = ground
-        ctx.fillRect(0, groundY, metrics.width, metrics.height - groundY)
-
-        ctx.strokeStyle = 'rgba(176, 190, 210, 0.34)'
-        ctx.lineWidth = Math.max(1, metrics.scale * 0.002)
-        ctx.beginPath()
-        ctx.moveTo(0, groundY)
-        ctx.lineTo(metrics.width, groundY)
-        ctx.stroke()
-      }
+      ctx.strokeStyle = 'rgba(176, 190, 210, 0.34)'
+      ctx.lineWidth = Math.max(1, metrics.scale * 0.002)
+      ctx.beginPath()
+      ctx.moveTo(0, groundY)
+      ctx.lineTo(metrics.width, groundY)
+      ctx.stroke()
 
       const zoneX = worldToScreenX(EXTRACTION_WORLD_X, camera, metrics)
       const zoneY = worldToScreenY(EXTRACTION_WORLD_Y, camera, metrics)
       const zoneRadiusPx = EXTRACTION_ZONE_RADIUS * metrics.scale * camera.zoom
-
-      const zoneAura = ctx.createRadialGradient(
-        zoneX,
-        zoneY,
-        zoneRadiusPx * 0.6,
-        zoneX,
-        zoneY,
-        zoneRadiusPx * 1.25,
-      )
-      zoneAura.addColorStop(0, `rgba(130, 224, 255, ${0.1 + tint * 0.12})`)
-      zoneAura.addColorStop(1, 'rgba(130, 224, 255, 0)')
-      ctx.fillStyle = zoneAura
-      ctx.beginPath()
-      ctx.arc(zoneX, zoneY, zoneRadiusPx * 1.25, 0, Math.PI * 2)
-      ctx.fill()
 
       const innerRadius = zoneRadiusPx
       const orbImage = orbImageRef.current
@@ -1098,12 +1041,14 @@ export function ExtractionCanvas({
       for (let i = 0; i < buildings.length; i += 1) {
         const building = buildings[i]
         const colored = i < props.unlockedBuildings
+        const visualStage = props.buildingVisualStages[building.id] ?? 0
         const rect = drawBuilding(
           ctx,
           building,
           camera,
           metrics,
           colored,
+          visualStage,
           tint,
           groundBuildingImageRefs.current,
         )

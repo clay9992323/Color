@@ -1,4 +1,5 @@
 export type UpgradeLaneId = 'extraction' | 'automation' | 'diffusion'
+export type ColorCurrencyId = 'cyan' | 'magenta'
 
 export type OperatorState = 'approach' | 'siphon' | 'return' | 'recover'
 
@@ -95,6 +96,7 @@ export interface PrestigeResult {
 export interface SaveDataV1 {
   version: 1
   chroma: number
+  magenta: number
   restorationPoints: number
   prismShards: number
   upgrades: Record<UpgradeLaneId, number>
@@ -105,6 +107,8 @@ export interface SaveDataV1 {
 
 export interface GameState {
   chroma: number
+  magenta: number
+  magentaUnlocked: boolean
   restorationPoints: number
   restorationPercent: number
   momentum: number

@@ -520,6 +520,45 @@
   font-size: 0.8rem;
 }
 
+.currency-exchange {
+  margin-top: 0.62rem;
+  border-radius: 0.58rem;
+  border: 1px solid rgba(173, 200, 244, 0.26);
+  background: rgba(13, 22, 42, 0.88);
+  padding: 0.48rem;
+}
+
+.currency-exchange h3 {
+  margin: 0;
+  font-size: 0.74rem;
+}
+
+.currency-exchange > div {
+  margin-top: 0.38rem;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.currency-exchange button {
+  min-height: 2.2rem;
+  border-radius: 0.46rem;
+  border: 1px solid rgba(167, 197, 236, 0.34);
+  background: rgba(42, 60, 95, 0.86);
+  color: var(--text-1);
+  font-size: 0.71rem;
+  font-weight: 600;
+}
+
+.currency-exchange button:disabled {
+  opacity: 0.5;
+}
+
+.currency-lock-note {
+  margin: 0.58rem 0 0;
+  color: var(--text-2);
+  font-size: 0.68rem;
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;

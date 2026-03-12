@@ -2,6 +2,8 @@ import { useStore } from 'zustand'
 import { createStore } from 'zustand/vanilla'
 import {
   BUILDINGS,
+  MAGENTA_EXCHANGE_RATE,
+  MAGENTA_UNLOCK_AT_BUILDING_COUNT,
   MOMENTUM_DECAY_PER_SECOND,
   MOMENTUM_PER_TAP,
   MOMENTUM_PER_UPGRADE,
@@ -44,6 +46,8 @@ export interface GameStore extends GameState {
   tick: (deltaSeconds?: number) => void
   extract: () => void
   purchaseUpgrade: (lane: UpgradeLaneId) => boolean
+  exchangeCyanToMagenta: (cyanAmount: number) => boolean
+  exchangeMagentaToCyan: (magentaAmount: number) => boolean
   prestige: () => PrestigeResult | null
   dismissOfflineGain: () => void
   saveNow: () => void
@@ -51,6 +55,7 @@ export interface GameStore extends GameState {
 
 interface BaseState {
   chroma: number
+  magenta: number
   restorationPoints: number
   momentum: number
   unlockSurgeSeconds: number
@@ -93,6 +98,7 @@ export function calculateUnlockedBuildingCount(
 function createBaseState(now: number, prismShards = 0): BaseState {
   return {
     chroma: 0,
+    magenta: 0,
     restorationPoints: 0,
     momentum: 0,
     unlockSurgeSeconds: 0,
@@ -111,6 +117,7 @@ function hydrateState(base: BaseState, previous?: GameState): GameState {
     base.totalUpgradesPurchased,
     base.prismShards,
   )
+  const magentaUnlocked = unlockedBuildings >= MAGENTA_UNLOCK_AT_BUILDING_COUNT
   const workforce = calculateWorkforce(base.upgrades.automation, unlockedBuildings)
   const restorationPercent = calculateRestorationPercent(base.restorationPoints)
   const engagementMultiplier = calculateEngagementMultiplier(
@@ -144,6 +151,8 @@ function hydrateState(base: BaseState, previous?: GameState): GameState {
 
   return {
     chroma: base.chroma,
+    magenta: base.magenta,
+    magentaUnlocked,
     restorationPoints: base.restorationPoints,
     restorationPercent,
     momentum: base.momentum,
@@ -183,6 +192,7 @@ function parseSave(raw: string | null): SaveDataV1 | null {
     return {
       version: SAVE_VERSION,
       chroma: parsed.chroma,
+      magenta: Number(parsed.magenta ?? 0),
       restorationPoints: parsed.restorationPoints,
       prismShards: parsed.prismShards,
       upgrades: {
@@ -203,6 +213,7 @@ function toSaveData(state: GameState): SaveDataV1 {
   return {
     version: SAVE_VERSION,
     chroma: state.chroma,
+    magenta: state.magenta,
     restorationPoints: state.restorationPoints,
     prismShards: state.prismShards,
     upgrades: state.upgrades,
@@ -215,6 +226,7 @@ function toSaveData(state: GameState): SaveDataV1 {
 function createPostPrestigeBase(state: GameState, result: PrestigeResult, now: number): BaseState {
   return {
     chroma: result.launchChroma,
+    magenta: 0,
     restorationPoints: 0,
     momentum: result.launchMomentum,
     unlockSurgeSeconds: result.launchSurgeSeconds,
@@ -225,6 +237,33 @@ function createPostPrestigeBase(state: GameState, result: PrestigeResult, now: n
     lastTickAt: now,
     lastActiveAt: now,
     offlineGainResult: null,
+  }
+}
+
+function totalSpendableCyan(chroma: number, magenta: number): number {
+  return chroma + magenta * MAGENTA_EXCHANGE_RATE
+}
+
+function spendCyanEquivalent(
+  chroma: number,
+  magenta: number,
+  requiredCyan: number,
+): { chroma: number; magenta: number } | null {
+  if (requiredCyan <= chroma) {
+    return { chroma: chroma - requiredCyan, magenta }
+  }
+
+  const remaining = requiredCyan - chroma
+  const magentaNeeded = Math.ceil(remaining / MAGENTA_EXCHANGE_RATE)
+  if (magentaNeeded > magenta) {
+    return null
+  }
+
+  const spentFromMagenta = magentaNeeded * MAGENTA_EXCHANGE_RATE
+  const cyanLeftover = spentFromMagenta - remaining
+  return {
+    chroma: cyanLeftover,
+    magenta: magenta - magentaNeeded,
   }
 }
 
@@ -252,6 +291,7 @@ export function createGameStore() {
 
       const base: BaseState = {
         chroma: parsed.chroma,
+        magenta: parsed.magenta,
         restorationPoints: parsed.restorationPoints,
         momentum: 0,
         unlockSurgeSeconds: 0,
@@ -304,6 +344,7 @@ export function createGameStore() {
           momentum,
           unlockSurgeSeconds,
           chroma: state.chroma + autoGain,
+          magenta: state.magenta,
           restorationPoints,
           restorationPercent,
           lifetimeRestorationPoints: state.lifetimeRestorationPoints + restorationGain,
@@ -337,6 +378,7 @@ export function createGameStore() {
         return {
           momentum,
           chroma: state.chroma + gain,
+          magenta: state.magenta,
           restorationPoints,
           restorationPercent: calculateRestorationPercent(restorationPoints),
           lifetimeRestorationPoints: state.lifetimeRestorationPoints + restorationGain,
@@ -366,7 +408,12 @@ export function createGameStore() {
       }
 
       const cost = calculateUpgradeCost(lane, currentTier)
-      if (state.chroma < cost) {
+      if (totalSpendableCyan(state.chroma, state.magenta) < cost) {
+        return false
+      }
+
+      const balancesAfterSpend = spendCyanEquivalent(state.chroma, state.magenta, cost)
+      if (!balancesAfterSpend) {
         return false
       }
 
@@ -393,7 +440,8 @@ export function createGameStore() {
         : state.unlockSurgeSeconds
 
       const nextBase: BaseState = {
-        chroma: state.chroma - cost + unlockReward,
+        chroma: balancesAfterSpend.chroma + unlockReward,
+        magenta: balancesAfterSpend.magenta,
         restorationPoints: state.restorationPoints,
         momentum: Math.min(1, state.momentum + MOMENTUM_PER_UPGRADE),
         unlockSurgeSeconds: nextUnlockSurgeSeconds,
@@ -408,6 +456,52 @@ export function createGameStore() {
       const next = hydrateState(nextBase, state)
       set(next)
       return true
+    },
+
+    exchangeCyanToMagenta: (cyanAmount: number) => {
+      const nowTs = Date.now()
+      let exchanged = false
+      set((state) => {
+        if (!state.magentaUnlocked) {
+          return state
+        }
+        const roundedAmount =
+          Math.floor(Math.max(0, cyanAmount) / MAGENTA_EXCHANGE_RATE) *
+          MAGENTA_EXCHANGE_RATE
+        if (roundedAmount <= 0 || state.chroma < roundedAmount) {
+          return state
+        }
+        exchanged = true
+        return {
+          chroma: state.chroma - roundedAmount,
+          magenta: state.magenta + roundedAmount / MAGENTA_EXCHANGE_RATE,
+          lastTickAt: nowTs,
+          lastActiveAt: nowTs,
+        }
+      })
+      return exchanged
+    },
+
+    exchangeMagentaToCyan: (magentaAmount: number) => {
+      const nowTs = Date.now()
+      let exchanged = false
+      set((state) => {
+        if (!state.magentaUnlocked) {
+          return state
+        }
+        const roundedAmount = Math.floor(Math.max(0, magentaAmount))
+        if (roundedAmount <= 0 || state.magenta < roundedAmount) {
+          return state
+        }
+        exchanged = true
+        return {
+          chroma: state.chroma + roundedAmount * MAGENTA_EXCHANGE_RATE,
+          magenta: state.magenta - roundedAmount,
+          lastTickAt: nowTs,
+          lastActiveAt: nowTs,
+        }
+      })
+      return exchanged
     },
 
     prestige: () => {

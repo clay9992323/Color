@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import {
+  BUILDING_VISUAL_STAGE_THRESHOLDS,
   BUILDINGS,
   BUILDING_UPGRADE_OPTIONS,
   GAME_TITLE,
+  MAGENTA_EXCHANGE_RATE,
   SAVE_INTERVAL_MS,
   TICK_RATE_HZ,
   UPGRADE_LANES,
@@ -35,8 +37,12 @@ function App() {
   const prestige = useGameStore((state) => state.prestige)
   const saveNow = useGameStore((state) => state.saveNow)
   const dismissOfflineGain = useGameStore((state) => state.dismissOfflineGain)
+  const exchangeCyanToMagenta = useGameStore((state) => state.exchangeCyanToMagenta)
+  const exchangeMagentaToCyan = useGameStore((state) => state.exchangeMagentaToCyan)
 
   const chroma = useGameStore((state) => state.chroma)
+  const magenta = useGameStore((state) => state.magenta)
+  const magentaUnlocked = useGameStore((state) => state.magentaUnlocked)
   const restorationPercent = useGameStore((state) => state.restorationPercent)
   const restorationPoints = useGameStore((state) => state.restorationPoints)
   const momentum = useGameStore((state) => state.momentum)
@@ -119,6 +125,7 @@ function App() {
     selectedBuildingIndex >= 0 && selectedBuildingIndex < unlockedBuildings
 
   const selectedBuildingUpgrades = useMemo(() => {
+    const spendableCyan = chroma + magenta * MAGENTA_EXCHANGE_RATE
     if (!selectedBuilding) {
       return []
     }
@@ -149,12 +156,47 @@ function App() {
           canAfford:
             selectedBuildingUnlocked &&
             !isMaxed &&
-            chroma >= nextCost &&
+            spendableCyan >= nextCost &&
             !missingShards,
         }
       })
       .filter((entry) => entry !== null)
-  }, [chroma, prismShards, selectedBuilding, selectedBuildingUnlocked, upgrades])
+  }, [chroma, magenta, prismShards, selectedBuilding, selectedBuildingUnlocked, upgrades])
+
+  const buildingVisualStages = useMemo(() => {
+    const laneMaxById = new Map(UPGRADE_LANES.map((lane) => [lane.id, lane.maxTier]))
+    const stageByBuilding: Record<string, number> = {}
+
+    for (let i = 0; i < BUILDINGS.length; i += 1) {
+      const building = BUILDINGS[i]
+      const options = BUILDING_UPGRADE_OPTIONS[building.id] ?? []
+      const lanes = Array.from(new Set(options.map((option) => option.lane)))
+      if (lanes.length === 0) {
+        stageByBuilding[building.id] = 0
+        continue
+      }
+
+      let normalizedProgress = 0
+      for (let laneIndex = 0; laneIndex < lanes.length; laneIndex += 1) {
+        const laneId = lanes[laneIndex]
+        const maxTier = laneMaxById.get(laneId) ?? 1
+        normalizedProgress += Math.min(1, upgrades[laneId] / Math.max(1, maxTier))
+      }
+      normalizedProgress /= lanes.length
+
+      let stage = 0
+      for (let thresholdIndex = 0; thresholdIndex < BUILDING_VISUAL_STAGE_THRESHOLDS.length; thresholdIndex += 1) {
+        if (normalizedProgress >= BUILDING_VISUAL_STAGE_THRESHOLDS[thresholdIndex]) {
+          stage += 1
+        }
+      }
+      stageByBuilding[building.id] = Math.min(4, Math.max(0, stage))
+    }
+
+    return stageByBuilding
+  }, [upgrades])
+
+  const spendableCyan = chroma + magenta * MAGENTA_EXCHANGE_RATE
 
   const handleExtract = () => {
     extract()
@@ -203,6 +245,7 @@ function App() {
           workforce={workforce}
           agents={agents}
           beacons={beacons}
+          buildingVisualStages={buildingVisualStages}
           selectedBuildingId={selectedBuildingId}
           onExtract={handleExtract}
           onSelectBuilding={(buildingId) => {
@@ -237,8 +280,13 @@ function App() {
 
         <aside className="left-stack">
           <article className="hud-panel metric">
-            <span>Chroma</span>
+            <span>Cyan</span>
             <strong>{formatCompact(chroma)}</strong>
+          </article>
+          <article className="hud-panel metric compact">
+            <span>Magenta</span>
+            <strong>{magentaUnlocked ? formatCompact(magenta) : 'Locked'}</strong>
+            <small>{magentaUnlocked ? '2x value' : 'Unlock later'}</small>
           </article>
           <article className="hud-panel metric">
             <span>Recovery</span>
@@ -337,7 +385,7 @@ function App() {
                           ? `Need ${formatCompact(upgrade.shardRequirement)} shards`
                           : upgrade.canAfford
                             ? `Upgrade ${formatCompact(upgrade.nextCost)}`
-                            : `Need ${formatCompact(upgrade.nextCost)} chroma`}
+                            : `Need ${formatCompact(upgrade.nextCost)} cyan eq`}
                     </button>
                   </article>
                 ))}
@@ -386,6 +434,18 @@ function App() {
               </header>
               <div className="systems-grid">
                 <article>
+                  <span>Cyan Eq Balance</span>
+                  <strong>{formatCompact(spendableCyan)}</strong>
+                </article>
+                <article>
+                  <span>Cyan</span>
+                  <strong>{formatCompact(chroma)}</strong>
+                </article>
+                <article>
+                  <span>Magenta</span>
+                  <strong>{magentaUnlocked ? formatCompact(magenta) : 'Locked'}</strong>
+                </article>
+                <article>
                   <span>Visible Crew Cap</span>
                   <strong>{formatCompact(workforce.visibleCap)}</strong>
                 </article>
@@ -410,6 +470,45 @@ function App() {
                   <strong>{formatPercent(outputBoostPercent)}</strong>
                 </article>
               </div>
+              {magentaUnlocked ? (
+                <div className="currency-exchange">
+                  <h3>Color Exchange</h3>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={chroma < MAGENTA_EXCHANGE_RATE}
+                      onClick={() => {
+                        const exchangeAmount =
+                          Math.max(
+                            MAGENTA_EXCHANGE_RATE,
+                            Math.floor(chroma / MAGENTA_EXCHANGE_RATE) *
+                              MAGENTA_EXCHANGE_RATE,
+                          )
+                        if (exchangeCyanToMagenta(exchangeAmount)) {
+                          audioRef.current.buy()
+                        }
+                      }}
+                    >
+                      Exchange All Cyan to Magenta (2:1)
+                    </button>
+                    <button
+                      type="button"
+                      disabled={magenta < 1}
+                      onClick={() => {
+                        if (exchangeMagentaToCyan(1)) {
+                          audioRef.current.buy()
+                        }
+                      }}
+                    >
+                      Exchange 1 Magenta to 2 Cyan
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="currency-lock-note">
+                  Unlock Pigment Purifier to activate Magenta exchange.
+                </p>
+              )}
             </div>
           )}
         </section>
@@ -423,7 +522,7 @@ function App() {
               Offline time: {formatSeconds(offlineGainResult.elapsedSeconds)} (capped at{' '}
               {formatSeconds(offlineGainResult.cappedSeconds)})
             </p>
-            <p>Recovered {formatCompact(offlineGainResult.chromaAwarded)} chroma while away.</p>
+            <p>Recovered {formatCompact(offlineGainResult.chromaAwarded)} cyan while away.</p>
             <button type="button" onClick={dismissOfflineGain}>
               Continue
             </button>
@@ -434,7 +533,7 @@ function App() {
       {lastPrestigeResult !== null && (
         <aside className="toast">
           Prestige complete: +{lastPrestigeResult.earnedShards} Prism Shards, +
-          {formatCompact(lastPrestigeResult.launchChroma)} launch chroma
+          {formatCompact(lastPrestigeResult.launchChroma)} launch cyan
           <button
             type="button"
             onClick={() => {

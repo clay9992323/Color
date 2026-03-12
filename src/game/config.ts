@@ -10,6 +10,10 @@ export const TICK_SECONDS = 1 / TICK_RATE_HZ
 export const SAVE_INTERVAL_MS = 10_000
 export const OFFLINE_CAP_SECONDS = 8 * 60 * 60
 export const OFFLINE_EFFICIENCY = 0.8
+export const MAGENTA_EXCHANGE_RATE = 2
+export const MAGENTA_UNLOCK_AT_BUILDING_COUNT = 3
+export const BUILDING_VISUAL_STAGE_SCALE = [0.58, 0.78, 1, 1.2, 1.38] as const
+export const BUILDING_VISUAL_STAGE_THRESHOLDS = [0.2, 0.42, 0.65, 0.86] as const
 
 export const RESTORATION_TARGET_POINTS = 320_000
 export const MAX_VISIBLE_OPERATORS = 48
